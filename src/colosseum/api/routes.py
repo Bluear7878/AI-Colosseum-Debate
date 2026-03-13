@@ -142,6 +142,8 @@ async def create_run_stream(
 
         run = ExperimentRun(
             project_name=request.project_name,
+            encourage_internet_search=request.encourage_internet_search,
+            response_language=request.response_language,
             task=request.task,
             agents=request.agents,
             judge=request.judge,
@@ -238,9 +240,10 @@ async def create_run_stream(
 
                 round_type = decision.next_round_type or RoundType.CRITIQUE
                 round_idx = len(run.debate_rounds) + 1
+                round_timeout = run.budget_policy.timeout_for_round(round_idx)
                 bus.emit("debate_round_start", {"round_index": round_idx, "round_type": round_type.value})
                 bus.emit("phase", {"phase": "debate", "message": f"Round {round_idx}: {round_type.value}", "status": "debating"})
-                yield f"data: {json.dumps({'phase': 'debate_round', 'round_index': round_idx, 'round_type': round_type.value, 'message': f'Round {round_idx}: {round_type.value}...', 'agenda_title': decision.agenda.title if decision.agenda else '', 'agenda_question': decision.agenda.question if decision.agenda else ''})}\n\n"
+                yield f"data: {json.dumps({'phase': 'debate_round', 'round_index': round_idx, 'round_type': round_type.value, 'message': f'Round {round_idx}: {round_type.value}...', 'agenda_title': decision.agenda.title if decision.agenda else '', 'agenda_question': decision.agenda.question if decision.agenda else '', 'timeout_seconds': round_timeout})}\n\n"
 
                 run.status = RunStatus.DEBATING
                 debate_round = None

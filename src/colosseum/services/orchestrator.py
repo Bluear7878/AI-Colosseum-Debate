@@ -22,7 +22,7 @@ from colosseum.services.judge import JudgeService
 from colosseum.services.normalizers import ResponseNormalizer
 from colosseum.services.provider_runtime import ProviderRuntimeService
 from colosseum.services.repository import FileRunRepository
-from colosseum.core.config import EVIDENCE_POLICY
+from colosseum.core.config import build_evidence_policy
 
 
 class ColosseumOrchestrator:
@@ -52,6 +52,8 @@ class ColosseumOrchestrator:
             self.provider_runtime.validate_provider_selectable(request.judge.provider, "AI judge")
         run = ExperimentRun(
             project_name=request.project_name,
+            encourage_internet_search=request.encourage_internet_search,
+            response_language=request.response_language,
             task=request.task,
             agents=request.agents,
             judge=request.judge,
@@ -215,6 +217,7 @@ class ColosseumOrchestrator:
                     has_image_inputs=bool(image_inputs),
                 )
             )
+        planning_timeout = run.budget_policy.planning_timeout_seconds
         results = await asyncio.gather(
             *[
                 self.provider_runtime.execute(
@@ -224,6 +227,7 @@ class ColosseumOrchestrator:
                     provider_config=agent.provider,
                     operation="plan",
                     instructions=prompt,
+                    timeout_override=planning_timeout,
                     metadata={
                         "run_id": run.run_id,
                         "agent_id": agent.agent_id,
@@ -231,6 +235,8 @@ class ColosseumOrchestrator:
                         "context_summary": run.context_bundle.bundle_summary,
                         "image_inputs": image_inputs,
                         "image_summary": image_summary,
+                        "encourage_internet_search": run.encourage_internet_search,
+                        "search_policy": build_evidence_policy(run.encourage_internet_search),
                     },
                 )
                 for agent, prompt in zip(run.agents, prompts, strict=True)
@@ -278,6 +284,7 @@ class ColosseumOrchestrator:
                     provider_config=a.provider,
                     operation="plan",
                     instructions=p,
+                    timeout_override=run.budget_policy.planning_timeout_seconds,
                     metadata={
                         "run_id": run.run_id,
                         "agent_id": a.agent_id,
@@ -285,6 +292,8 @@ class ColosseumOrchestrator:
                         "context_summary": context_bundle.bundle_summary,
                         "image_inputs": image_inputs,
                         "image_summary": image_summary,
+                        "encourage_internet_search": run.encourage_internet_search,
+                        "search_policy": build_evidence_policy(run.encourage_internet_search),
                         "persona": a.persona_content or "",
                     },
                 )
@@ -386,7 +395,7 @@ class ColosseumOrchestrator:
             f"Constraints: {run.task.constraints}",
             f"Agent specialty: {agent.specialty or 'generalist'}",
             "Produce an independent plan before seeing any other plan.",
-            EVIDENCE_POLICY,
+            build_evidence_policy(run.encourage_internet_search),
             "Use this exact section structure: summary, evidence_basis, assumptions, architecture, implementation_strategy, risks, strengths, weaknesses, trade_offs, open_questions.",
             "Every major claim should be tied to objective evidence from the frozen bundle or labeled as inference/uncertainty.",
         ]
@@ -399,6 +408,8 @@ class ColosseumOrchestrator:
                 ]
             )
         parts.append(context_text)
+        if run.response_language and run.response_language != "auto":
+            parts.append(f"IMPORTANT: You MUST write your entire response in {run.response_language}. All sections, analysis, and explanations must be in {run.response_language}.")
         if agent.persona_content:
             parts.insert(0, "=== YOUR PERSONA ===\n" + agent.persona_content + "\n=== END PERSONA ===")
         elif agent.system_prompt:

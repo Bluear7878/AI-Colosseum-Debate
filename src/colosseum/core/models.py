@@ -377,6 +377,15 @@ class BudgetPolicy(BaseModel):
     per_agent_message_limit: int = 1
     min_novelty_threshold: float = 0.18
     convergence_threshold: float = 0.75
+    planning_timeout_seconds: int = 360
+    round_timeout_seconds: int = 300
+    late_round_timeout_factor: float = 0.8
+    min_round_timeout_seconds: int = 120
+
+    def timeout_for_round(self, round_index: int) -> int:
+        """Return the timeout in seconds for a given debate round (1-based)."""
+        t = self.round_timeout_seconds * (self.late_round_timeout_factor ** (round_index - 1))
+        return max(self.min_round_timeout_seconds, int(t))
 
 
 class BudgetLedger(BaseModel):
@@ -460,6 +469,8 @@ class RuntimeEvent(BaseModel):
 class ExperimentRun(BaseModel):
     run_id: str = Field(default_factory=lambda: str(uuid4()))
     project_name: str
+    encourage_internet_search: bool = False
+    response_language: str = "auto"
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     status: RunStatus = RunStatus.PENDING
@@ -494,6 +505,8 @@ class RunListItem(BaseModel):
 
 class RunCreateRequest(BaseModel):
     project_name: str = "Colosseum"
+    encourage_internet_search: bool = False
+    response_language: str = "auto"
     task: TaskSpec
     context_sources: list[ContextSourceInput] = Field(default_factory=list)
     agents: list[AgentConfig]

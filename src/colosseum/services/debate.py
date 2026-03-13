@@ -5,7 +5,7 @@ from difflib import SequenceMatcher
 from statistics import mean
 
 from colosseum.core.config import (
-    EVIDENCE_POLICY,
+    build_evidence_policy,
     MAX_DEBATE_MEMORY_CHARS,
     MAX_DEBATE_PEER_SUMMARIES,
     MAX_DEBATE_SUMMARY_CHARS,
@@ -46,6 +46,7 @@ class DebateEngine:
         plan_map = {plan.agent_id: plan for plan in run.plans}
         image_inputs = self._image_inputs(run)
         image_summary = self._image_summary(run)
+        round_timeout = run.budget_policy.timeout_for_round(round_index)
         tasks = []
         for agent in run.agents:
             plan = plan_map[agent.agent_id]
@@ -66,6 +67,7 @@ class DebateEngine:
                     provider_config=agent.provider,
                     operation="debate",
                     instructions=prompt,
+                    timeout_override=round_timeout,
                     metadata={
                         "run_id": run.run_id,
                         "agent_id": agent.agent_id,
@@ -84,6 +86,8 @@ class DebateEngine:
                         "round_index": round_index,
                         "image_inputs": image_inputs,
                         "image_summary": image_summary,
+                        "encourage_internet_search": run.encourage_internet_search,
+                        "search_policy": build_evidence_policy(run.encourage_internet_search),
                     },
                 )
             )
@@ -132,6 +136,7 @@ class DebateEngine:
     ):
         """Yields (event_type, data) tuples as agents complete."""
         round_index = len(run.debate_rounds) + 1
+        round_timeout = run.budget_policy.timeout_for_round(round_index)
         plan_map = {plan.agent_id: plan for plan in run.plans}
         image_inputs = self._image_inputs(run)
         image_summary = self._image_summary(run)
@@ -158,6 +163,7 @@ class DebateEngine:
                     provider_config=a.provider,
                     operation="debate",
                     instructions=p,
+                    timeout_override=round_timeout,
                     metadata={
                         "run_id": run.run_id,
                         "agent_id": a.agent_id,
@@ -172,6 +178,8 @@ class DebateEngine:
                         "round_index": round_index,
                         "image_inputs": image_inputs,
                         "image_summary": image_summary,
+                        "encourage_internet_search": run.encourage_internet_search,
+                        "search_policy": build_evidence_policy(run.encourage_internet_search),
                         "persona": a.persona_content or "",
                     },
                 )
@@ -292,7 +300,7 @@ class DebateEngine:
         prompt_parts.extend([
             f"Memory summary: {memory}",
             f"Priority focus: {agenda.question if agenda else self._focus_hint(run)}",
-            EVIDENCE_POLICY,
+            build_evidence_policy(run.encourage_internet_search),
             "Constraints: You MUST directly respond to other participants' arguments. "
             "Quote or reference specific points they made. Rebut claims you disagree with, "
             "concede points that are well-supported, and propose alternatives where appropriate. "
@@ -309,6 +317,8 @@ class DebateEngine:
             )
         if instructions:
             prompt_parts.append(f"Additional judge instructions: {instructions}")
+        if run.response_language and run.response_language != "auto":
+            prompt_parts.append(f"IMPORTANT: You MUST write your entire response in {run.response_language}. All arguments, rebuttals, and analysis must be in {run.response_language}.")
         if agent.persona_content:
             prompt_parts.insert(0, "=== YOUR PERSONA ===\n" + agent.persona_content + "\n=== END PERSONA ===")
         elif agent.system_prompt:

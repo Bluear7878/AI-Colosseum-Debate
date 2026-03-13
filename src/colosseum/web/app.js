@@ -100,6 +100,7 @@ var MAX_TEXT_FILE_BYTES = 100000;
 var MAX_IMAGE_FILE_BYTES = 4 * 1024 * 1024;
 var currentRunId = null;
 var currentMode = "live"; // "live" or "result"
+var encourageInternetSearch = loadBooleanSetting("colosseum:encourage_search", true);
 var currentJudgeMode = "automated"; // "automated", "ai", or "human"
 var judgeModelIndex = {};
 
@@ -112,6 +113,22 @@ function loadCustomModels() {
 function saveCustomModels(list) {
   localStorage.setItem("colosseum:custom_models", JSON.stringify(list.map(normalizeCustomModel)));
 }
+function loadBooleanSetting(key, fallback) {
+  try {
+    var raw = localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return raw === "true";
+  }
+  catch (e) { return fallback; }
+}
+
+function saveBooleanSetting(key, value) {
+  try {
+    localStorage.setItem(key, value ? "true" : "false");
+  }
+  catch (e) { /* ignore */ }
+}
+
 var customModels = loadCustomModels();
 
 var gladiatorPersonas = {};  // id -> {persona_id, persona_content}
@@ -847,16 +864,33 @@ var DEPTH_LABELS = {
   5: "Deep Dive"
 };
 var DEPTH_PROFILES = {
-  1: { min_novelty: 0.05, convergence: 0.40, confidence: 0.55 },
-  2: { min_novelty: 0.10, convergence: 0.55, confidence: 0.65 },
-  3: { min_novelty: 0.18, convergence: 0.75, confidence: 0.78 },
-  4: { min_novelty: 0.25, convergence: 0.85, confidence: 0.85 },
-  5: { min_novelty: 0.30, convergence: 0.92, confidence: 0.92 }
+  1: { min_novelty: 0.05, convergence: 0.40, confidence: 0.55, planning_timeout: 240, round_timeout: 180 },
+  2: { min_novelty: 0.10, convergence: 0.55, confidence: 0.65, planning_timeout: 300, round_timeout: 240 },
+  3: { min_novelty: 0.18, convergence: 0.75, confidence: 0.78, planning_timeout: 360, round_timeout: 300 },
+  4: { min_novelty: 0.25, convergence: 0.85, confidence: 0.85, planning_timeout: 420, round_timeout: 360 },
+  5: { min_novelty: 0.30, convergence: 0.92, confidence: 0.92, planning_timeout: 480, round_timeout: 420 }
 };
+var planningTimeoutInput = document.getElementById("planning-timeout");
+var roundTimeoutInput = document.getElementById("round-timeout");
+var timeoutDecayInput = document.getElementById("timeout-decay");
+var minTimeoutInput = document.getElementById("min-timeout");
+
+function syncTimeoutDefaults() {
+  var v = parseInt(depthSlider.value);
+  var profile = DEPTH_PROFILES[v] || DEPTH_PROFILES[3];
+  planningTimeoutInput.value = profile.planning_timeout;
+  roundTimeoutInput.value = profile.round_timeout;
+  timeoutDecayInput.value = "0.80";
+  minTimeoutInput.value = "120";
+}
+
 depthSlider.addEventListener("input", function() {
   var v = parseInt(depthSlider.value);
   depthVal.textContent = v + (v === 1 ? " round" : " rounds") + " — " + (DEPTH_LABELS[v] || "");
+  syncTimeoutDefaults();
 });
+
+syncTimeoutDefaults();
 
 /* ── Mode toggle ── */
 var modeLive = document.getElementById("mode-live");
@@ -881,6 +915,8 @@ var judgeHuman = document.getElementById("judge-human");
 var judgeModelWrap = document.getElementById("judge-model-wrap");
 var judgeModelSelect = document.getElementById("judge-model");
 var judgeNote = document.getElementById("judge-note");
+var searchToggle = document.getElementById("encourage-search-toggle");
+var searchNote = document.getElementById("search-note");
 
 var JUDGE_NOTES = {
   automated: "Colosseum's built-in judge balances evidence quality, disagreement, and budget pressure.",
@@ -943,6 +979,26 @@ if (judgeModelSelect) {
 
 renderJudgeModelOptions();
 updateJudgeControls();
+updateSearchPreferenceUI();
+
+function updateSearchPreferenceUI() {
+  if (searchToggle) searchToggle.checked = !!encourageInternetSearch;
+  if (!searchNote) return;
+  if (encourageInternetSearch) {
+    searchNote.textContent = "When enabled, agents are encouraged to check authoritative web sources if their provider supports browsing. If not, they must say so instead of guessing.";
+  } else {
+    searchNote.textContent = "When disabled, agents are pushed to stay inside the frozen bundle, avoid memory-based fill-ins, and mark uncertainty explicitly.";
+  }
+}
+
+if (searchToggle) {
+  searchToggle.addEventListener("change", function() {
+    encourageInternetSearch = !!searchToggle.checked;
+    saveBooleanSetting("colosseum:encourage_search", encourageInternetSearch);
+    updateSearchPreferenceUI();
+  });
+}
+
 
 /* ── File attachments ── */
 var fileDrop = document.getElementById("file-drop");
@@ -1479,15 +1535,18 @@ function validatePaidSelection() {
 
 function startPolicyNote() {
   var action = document.getElementById("paid-depletion-action").value;
+  var searchLine = encourageInternetSearch
+    ? " Search-aware mode is on, so agents are encouraged to verify uncertain claims with authoritative web sources when their provider supports it."
+    : " Search-aware mode is off, so agents must stay inside the frozen bundle and explicitly mark uncertainty.";
   if (action === "switch_to_free") {
     var fallbackSelect = document.getElementById("free-fallback-model");
     var label = fallbackSelect && fallbackSelect.options[fallbackSelect.selectedIndex] ? fallbackSelect.options[fallbackSelect.selectedIndex].text : "the free fallback";
-    return "Arena locked. If paid quota runs out, later turns will switch to " + label + ".";
+    return "Arena locked. If paid quota runs out, later turns will switch to " + label + "." + searchLine;
   }
   if (action === "wait_for_reset") {
-    return "Arena locked. If paid quota runs out, Colosseum will pause until the tracked reset time.";
+    return "Arena locked. If paid quota runs out, Colosseum will pause until the tracked reset time." + searchLine;
   }
-  return "Arena locked. Preparing shared context and scheduling gladiators...";
+  return "Arena locked. Preparing shared context and scheduling gladiators..." + searchLine;
 }
 
 function buildPayload() {
@@ -1563,8 +1622,12 @@ function buildPayload() {
 
   var judgeProvider = currentJudgeMode === "ai" ? buildJudgeProviderPayload() : null;
 
+  var responseLang = document.getElementById("response-language").value;
+
   return {
     project_name: "Colosseum",
+    encourage_internet_search: encourageInternetSearch,
+    response_language: responseLang,
     task: {
       title: topic.length > 120 ? topic.slice(0, 120) : topic,
       problem_statement: topic + (codebaseUrl ? "\n\nCodebase: " + codebaseUrl : ""),
@@ -1585,7 +1648,11 @@ function buildPayload() {
       per_round_token_limit: 12000,
       per_agent_message_limit: 1,
       min_novelty_threshold: (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).min_novelty,
-      convergence_threshold: (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).convergence
+      convergence_threshold: (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).convergence,
+      planning_timeout_seconds: parseInt(planningTimeoutInput.value) || (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).planning_timeout,
+      round_timeout_seconds: parseInt(roundTimeoutInput.value) || (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).round_timeout,
+      late_round_timeout_factor: parseFloat(timeoutDecayInput.value) || 0.8,
+      min_round_timeout_seconds: parseInt(minTimeoutInput.value) || 120
     }
   };
 }
@@ -1747,11 +1814,13 @@ function handleSSEEvent(evt) {
     var log = document.getElementById("live-log");
     var sep = document.createElement("div");
     sep.className = "round-separator";
+    var timeoutLabel = evt.timeout_seconds ? " · timeout " + Math.floor(evt.timeout_seconds / 60) + "m" + (evt.timeout_seconds % 60 ? evt.timeout_seconds % 60 + "s" : "") : "";
     sep.innerHTML = '<span class="round-sep-line"></span><span class="round-sep-label">Round ' +
-      (evt.round_index || "?") + ': ' + esc(evt.round_type || "debate") + '</span><span class="round-sep-line"></span>';
+      (evt.round_index || "?") + ': ' + esc(evt.round_type || "debate") + timeoutLabel + '</span><span class="round-sep-line"></span>';
     log.appendChild(sep);
     setBattleNote(
-      "Debate round " + (evt.round_index || "") + " in progress on '" + (evt.agenda_title || evt.round_type || "the current issue") + "'.",
+      "Debate round " + (evt.round_index || "") + " in progress on '" + (evt.agenda_title || evt.round_type || "the current issue") + "'." +
+      (evt.timeout_seconds ? " (timeout: " + Math.floor(evt.timeout_seconds / 60) + "m)" : ""),
       true
     );
   } else if (phase === "agent_thinking") {
