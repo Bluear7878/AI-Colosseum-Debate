@@ -4,7 +4,6 @@ from statistics import mean
 from typing import Any
 
 from colosseum.core.config import (
-    build_evidence_policy,
     LOW_EVIDENCE_SUPPORT_THRESHOLD,
     MIN_EVIDENCE_SUPPORT_TO_FINALIZE,
     ROUND_SEQUENCE,
@@ -28,7 +27,6 @@ from colosseum.core.models import (
     VerdictType,
 )
 from colosseum.services.budget import BudgetManager
-from colosseum.services.context_media import extract_image_inputs, summarize_image_inputs
 from colosseum.services.provider_runtime import ProviderRuntimeService
 
 
@@ -359,23 +357,27 @@ class JudgeService:
         assert run.judge.provider is not None  # caller guarantees this
         suggested_round = self._next_round_type(run)
         suggested_agenda = self._select_agenda(run, suggested_round)
-        image_inputs = self._image_inputs(run)
         allowed_round_types = ", ".join(round_type.value for round_type in RoundType)
+        judge_record = self._build_ai_judge_record(run)
         judge_instructions = (
             f"You are judging a structured evidence-first debate on: '{run.task.title}'. "
             f"Problem: {run.task.problem_statement}. "
             f"The debate has run {len(run.debate_rounds)} round(s) so far. "
+            "Judge ONLY from the submitted plans and debate record below. "
+            "Do not browse, do not ask for external search, and do not mention browsing limitations. "
+            "Treat debater-submitted citations, concessions, and uncertainties as the full record for this decision. "
+            f"\n\nSubmitted record:\n{judge_record}\n\n"
             "Evaluate: (1) disagreement level between plans on this specific task, "
-            "(2) novelty of recent arguments — are agents adding new task-relevant evidence or repeating themselves, "
-            "(3) evidence quality — are claims grounded in the frozen context or labeled as inference, "
+            "(2) novelty of recent arguments — are agents adding new task-relevant support or repeating themselves, "
+            "(3) evidence quality inside the submitted record — are claims supported by cited material or labeled as inference, "
             "(4) budget pressure. "
-            "Decide: continue_debate if agents are still producing relevant new evidence grounded in this task; "
-            "finalize if arguments are drifting off-topic, repeating without new evidence, or budget is high. "
+            "Decide: continue_debate if agents are still producing relevant new support on this task; "
+            "finalize if arguments are drifting off-topic, repeating without meaningful new support, or budget is high. "
             "Your agenda and focus areas must be directly relevant to the debate topic above. "
-            "Hallucination check: for each agent, assess whether specific facts, numbers, named tools, "
-            "or technical details in their arguments are actually grounded in the frozen context bundle. "
+            "Submission-quality check: for each agent, assess whether specific facts, numbers, named tools, "
+            "or technical details in their arguments are actually supported somewhere in the submitted record. "
             "Flag any agent that states precise claims (e.g., specific percentages, library names, "
-            "architectural specifics) without citing a source from the context — these are likely hallucinated. "
+            "architectural specifics) without support in the submitted record. "
             "Lower that agent's credibility and note the concern in your reasoning. "
             f"If you return next_round_type, it must be exactly one of: {allowed_round_types}."
         )
@@ -410,13 +412,9 @@ class JudgeService:
                 "suggested_action": "continue_debate",
                 "next_round_type": suggested_round.value if suggested_round else "rebuttal",
                 "run_id": run.run_id,
+                "task_title": run.task.title,
                 "plan_count": len(run.plans),
                 "round_count": len(run.debate_rounds),
-                "image_inputs": image_inputs,
-                "image_summary": self._image_summary(image_inputs),
-                "evidence_policy": build_evidence_policy(run.encourage_internet_search),
-                "encourage_internet_search": run.encourage_internet_search,
-                "search_policy": build_evidence_policy(run.encourage_internet_search),
                 "evidence_support": self._evidence_support(run),
                 "use_evidence_based_judging": run.judge.use_evidence_based_judging,
                 "suggested_agenda": suggested_agenda.model_dump(mode="json"),
@@ -567,12 +565,15 @@ class JudgeService:
             if lang
             else ""
         )
+        judge_record = self._build_ai_judge_record(run)
         instructions = (
             f"{lang_prefix}"
             f"You are the judge for a debate on: '{run.task.title}'. "
             f"Problem: {run.task.problem_statement}. "
             f"Success criteria: {run.task.success_criteria}. "
-            f"\n\nParticipating plans:\n{plan_summaries}\n\n"
+            "Judge ONLY from the submitted plans and debate record below. "
+            "Do not browse, do not ask for external search, and do not mention browsing limitations. "
+            f"\n\nParticipating plans:\n{plan_summaries}\n\nSubmitted record:\n{judge_record}\n\n"
             + (
                 "Select EXACTLY ONE winning plan — the one with the strongest evidence-backed arguments "
                 "for this specific task. "
@@ -806,11 +807,83 @@ class JudgeService:
         latest = run.debate_rounds[-1].summary
         return latest.key_disagreements[:4] or ["implementation complexity", "traceability"]
 
-    def _image_inputs(self, run: ExperimentRun) -> list[dict]:
-        return extract_image_inputs(run.context_bundle)
+    def _build_ai_judge_record(self, run: ExperimentRun) -> str:
+        """Render the debate artifacts that the AI judge is allowed to use."""
+        plan_lines = ["Opening plans:"]
+        for plan in run.plans:
+            plan_lines.append(
+                f"- [{plan.plan_id[:8]}] {plan.display_name}: {self._truncate_text(plan.summary, 220)}"
+            )
+            if plan.strengths:
+                plan_lines.append(
+                    f"  strengths: {self._truncate_text('; '.join(plan.strengths[:3]), 180)}"
+                )
+            if plan.weaknesses:
+                plan_lines.append(
+                    f"  weaknesses: {self._truncate_text('; '.join(plan.weaknesses[:2]), 160)}"
+                )
+            if plan.evidence_basis:
+                plan_lines.append(
+                    "  cited support from the debater: "
+                    f"{self._truncate_text('; '.join(plan.evidence_basis[:2]), 180)}"
+                )
 
-    def _image_summary(self, image_inputs: list[dict]) -> str:
-        return summarize_image_inputs(image_inputs, limit=3)
+        round_lines = ["Debate record:"]
+        if not run.debate_rounds:
+            round_lines.append("- No debate rounds yet. Judge from the opening plans only.")
+        else:
+            agent_names = {agent.agent_id: agent.display_name for agent in run.agents}
+            for debate_round in run.debate_rounds[-2:]:
+                round_lines.append(
+                    f"- Round {debate_round.index} ({debate_round.round_type.value})"
+                )
+                if debate_round.agenda:
+                    round_lines.append(
+                        f"  agenda: {self._truncate_text(debate_round.agenda.question, 180)}"
+                    )
+                if debate_round.summary.moderator_note:
+                    round_lines.append(
+                        "  moderator summary: "
+                        f"{self._truncate_text(debate_round.summary.moderator_note, 220)}"
+                    )
+                if debate_round.summary.key_disagreements:
+                    round_lines.append(
+                        "  key disagreements: "
+                        f"{self._truncate_text('; '.join(debate_round.summary.key_disagreements[:3]), 220)}"
+                    )
+                if debate_round.summary.strongest_arguments:
+                    round_lines.append(
+                        "  strongest arguments noted: "
+                        f"{self._truncate_text('; '.join(debate_round.summary.strongest_arguments[:3]), 220)}"
+                    )
+                for message in debate_round.messages:
+                    display_name = agent_names.get(message.agent_id, message.agent_id)
+                    round_lines.append(
+                        f"  {display_name}: {self._truncate_text(message.content, 180)}"
+                    )
+                    if message.critique_points:
+                        round_lines.append(
+                            "    critiques: "
+                            f"{self._truncate_text('; '.join(point.text for point in message.critique_points[:2]), 180)}"
+                        )
+                    if message.defense_points:
+                        round_lines.append(
+                            "    defenses: "
+                            f"{self._truncate_text('; '.join(point.text for point in message.defense_points[:2]), 180)}"
+                        )
+                    if message.concessions:
+                        round_lines.append(
+                            "    concessions: "
+                            f"{self._truncate_text('; '.join(message.concessions[:2]), 160)}"
+                        )
+
+        return "\n".join(plan_lines + [""] + round_lines)
+
+    def _truncate_text(self, text: str, limit: int) -> str:
+        cleaned = " ".join(str(text or "").split())
+        if len(cleaned) <= limit:
+            return cleaned
+        return cleaned[: max(0, limit - 3)].rstrip() + "..."
 
     def _initial_disagreements(self, run: ExperimentRun) -> list[str]:
         return [

@@ -384,6 +384,108 @@ def test_ai_judge_invalid_next_round_type_falls_back_to_supported_round(tmp_path
     assert decision.next_round_type == RoundType.CRITIQUE
 
 
+def test_ai_judge_prompt_uses_debate_record_without_search_metadata(tmp_path, monkeypatch):
+    judge = build_judge(tmp_path)
+    run = ExperimentRun(
+        project_name="Colosseum",
+        task=TaskSpec(title="Judge from debate", problem_statement="Use only the debate record."),
+        agents=[
+            AgentConfig(
+                agent_id="agent-a",
+                display_name="Agent A",
+                provider=ProviderConfig(type=ProviderType.MOCK, model="mock-a"),
+            ),
+            AgentConfig(
+                agent_id="agent-b",
+                display_name="Agent B",
+                provider=ProviderConfig(type=ProviderType.MOCK, model="mock-b"),
+            ),
+        ],
+        judge=JudgeConfig(
+            mode=JudgeMode.AI,
+            provider=ProviderConfig(type=ProviderType.MOCK, model="mock-judge"),
+        ),
+        plans=[
+            PlanDocument(
+                plan_id="plan-a",
+                agent_id="agent-a",
+                display_name="Plan A",
+                summary="Plan A summary",
+                strengths=["Fast rollout"],
+                evidence_basis=["Repo scan"],
+            ),
+            PlanDocument(
+                plan_id="plan-b",
+                agent_id="agent-b",
+                display_name="Plan B",
+                summary="Plan B summary",
+                weaknesses=["Higher cost"],
+            ),
+        ],
+        debate_rounds=[
+            DebateRound(
+                index=1,
+                round_type=RoundType.CRITIQUE,
+                purpose="Compare plans",
+                messages=[
+                    AgentMessage(
+                        round_index=1,
+                        round_type=RoundType.CRITIQUE,
+                        agent_id="agent-a",
+                        plan_id="plan-a",
+                        content="Agent A argues the rollout is lower risk.",
+                    ),
+                    AgentMessage(
+                        round_index=1,
+                        round_type=RoundType.CRITIQUE,
+                        agent_id="agent-b",
+                        plan_id="plan-b",
+                        content="Agent B argues the rollout is more flexible later.",
+                    ),
+                ],
+                summary=RoundSummary(
+                    moderator_note="The agents disagree on immediate risk versus future flexibility.",
+                    key_disagreements=["Immediate risk versus future flexibility"],
+                ),
+            )
+        ],
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_execute(**kwargs):
+        captured["instructions"] = kwargs["instructions"]
+        captured["metadata"] = kwargs["metadata"]
+        return ProviderExecution(
+            result=ProviderResult(
+                content="Judge response",
+                json_payload={
+                    "action": "continue_debate",
+                    "reasoning": "One more round is useful.",
+                    "confidence": 0.7,
+                    "disagreement_level": 0.5,
+                    "expected_value_of_next_round": 0.2,
+                    "next_round_type": "rebuttal",
+                    "focus_areas": ["risk trade-offs"],
+                },
+            ),
+            effective_provider=kwargs["provider_config"],
+        )
+
+    monkeypatch.setattr(judge.provider_runtime, "execute", fake_execute)
+
+    decision = asyncio.run(judge._ai_decide(run))
+
+    instructions = str(captured["instructions"])
+    metadata = dict(captured["metadata"])
+    assert decision.next_round_type == RoundType.REBUTTAL
+    assert "Do not browse" in instructions
+    assert "Plan A summary" in instructions
+    assert "Agent A argues the rollout is lower risk." in instructions
+    assert "search_policy" not in metadata
+    assert "evidence_policy" not in metadata
+
+
 def test_build_evidence_policy_changes_with_search_toggle():
     on_policy = build_evidence_policy(True)
     off_policy = build_evidence_policy(False)

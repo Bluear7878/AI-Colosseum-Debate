@@ -52,7 +52,7 @@ def build_prompt(data: dict) -> str:
     image_note = build_image_note(metadata)
     image_preamble = f"{image_note}\n\n" if image_note else ""
 
-    search_policy = metadata.get("search_policy")
+    search_policy = metadata.get("search_policy") if operation != "judge" else None
     search_preamble = f"Search policy: {search_policy}\n\n" if search_policy else ""
 
     # Surface task title prominently so the model cannot ignore the topic
