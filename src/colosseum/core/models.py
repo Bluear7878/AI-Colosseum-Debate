@@ -5,10 +5,11 @@ from enum import StrEnum
 from typing import Any, Literal, Optional
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 
 def utc_now() -> datetime:
+    """Return the current UTC timestamp for persisted runtime artifacts."""
     return datetime.now(timezone.utc)
 
 
@@ -129,6 +130,18 @@ class ProviderConfig(BaseModel):
     billing_tier: BillingTier | None = None
     quota_key: str | None = None
 
+    @field_validator("model", mode="before")
+    @classmethod
+    def _normalize_model(cls, value: object) -> str:
+        normalized = str(value or "mock-default").strip()
+        return normalized or "mock-default"
+
+    @model_validator(mode="after")
+    def validate_command_requirements(self) -> "ProviderConfig":
+        if self.type == ProviderType.COMMAND and not self.command:
+            raise ValueError("Command providers require a non-empty command.")
+        return self
+
 
 class AgentConfig(BaseModel):
     agent_id: str
@@ -139,6 +152,14 @@ class AgentConfig(BaseModel):
     persona_id: str | None = None
     persona_content: str | None = None
 
+    @field_validator("agent_id", "display_name", mode="before")
+    @classmethod
+    def _require_non_empty_identity(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Agent identity fields must be non-empty.")
+        return normalized
+
 
 class TaskSpec(BaseModel):
     title: str
@@ -147,6 +168,14 @@ class TaskSpec(BaseModel):
     success_criteria: list[str] = Field(default_factory=list)
     constraints: list[str] = Field(default_factory=list)
     desired_output: str | None = None
+
+    @field_validator("title", "problem_statement", mode="before")
+    @classmethod
+    def _require_non_empty_task_fields(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Task title and problem statement must be non-empty.")
+        return normalized
 
 
 class ContextSourceInput(BaseModel):
@@ -160,6 +189,31 @@ class ContextSourceInput(BaseModel):
     media_type: str | None = None
     max_chars: int = 12000
     max_files: int = 25
+
+    @model_validator(mode="after")
+    def validate_source_requirements(self) -> "ContextSourceInput":
+        if (
+            self.kind
+            in {
+                ContextSourceKind.LOCAL_FILE,
+                ContextSourceKind.LOCAL_IMAGE,
+                ContextSourceKind.LOCAL_DIRECTORY,
+            }
+            and not self.path
+        ):
+            raise ValueError(f"Context source '{self.source_id}' requires a path.")
+        if (
+            self.kind in {ContextSourceKind.INLINE_TEXT, ContextSourceKind.INLINE_IMAGE}
+            and not self.content
+        ):
+            raise ValueError(f"Context source '{self.source_id}' requires inline content.")
+        if self.kind == ContextSourceKind.EXTERNAL_REFERENCE and not (self.uri or self.content):
+            raise ValueError(
+                f"Context source '{self.source_id}' requires a URI or content reference."
+            )
+        if self.max_chars < 0 or self.max_files < 0:
+            raise ValueError("Context source limits must be non-negative.")
+        return self
 
 
 class ContextFragment(BaseModel):
@@ -370,6 +424,17 @@ class PaidProviderPolicy(BaseModel):
     fallback_provider: ProviderConfig | None = None
     wait_for_reset_max_seconds: int | None = None
 
+    @model_validator(mode="after")
+    def validate_policy(self) -> "PaidProviderPolicy":
+        if (
+            self.on_exhaustion == PaidExhaustionAction.SWITCH_TO_FREE
+            and self.fallback_provider is None
+        ):
+            raise ValueError("A free fallback provider is required when switching on exhaustion.")
+        if self.wait_for_reset_max_seconds is not None and self.wait_for_reset_max_seconds < 0:
+            raise ValueError("wait_for_reset_max_seconds must be non-negative.")
+        return self
+
 
 class BudgetPolicy(BaseModel):
     max_rounds: int = 3
@@ -384,6 +449,28 @@ class BudgetPolicy(BaseModel):
     late_round_timeout_factor: float = 0.8
     min_round_timeout_seconds: int = 120
     per_round_timeouts: list[int] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_thresholds(self) -> "BudgetPolicy":
+        if self.max_rounds < 0 or self.min_rounds < 0:
+            raise ValueError("Round counts must be non-negative.")
+        if self.min_rounds > self.max_rounds:
+            raise ValueError("min_rounds cannot exceed max_rounds.")
+        if self.total_token_budget < 0 or self.per_round_token_limit < 0:
+            raise ValueError("Token budgets must be non-negative.")
+        if self.per_agent_message_limit <= 0:
+            raise ValueError("per_agent_message_limit must be positive.")
+        if not 0.0 <= self.min_novelty_threshold <= 1.0:
+            raise ValueError("min_novelty_threshold must be between 0 and 1.")
+        if not 0.0 <= self.convergence_threshold <= 1.0:
+            raise ValueError("convergence_threshold must be between 0 and 1.")
+        if self.planning_timeout_seconds < 0 or self.round_timeout_seconds < 0:
+            raise ValueError("Timeouts must be non-negative.")
+        if self.min_round_timeout_seconds < 0:
+            raise ValueError("min_round_timeout_seconds must be non-negative.")
+        if any(timeout < 0 for timeout in self.per_round_timeouts):
+            raise ValueError("per_round_timeouts entries must be non-negative.")
+        return self
 
     def timeout_for_round(self, round_index: int) -> int:
         """Return the timeout in seconds for a given debate round (1-based).
@@ -462,6 +549,43 @@ class PersonaProfileRequest(BaseModel):
     debate_style: str
     free_text: str | None = None
 
+    @field_validator("profession", "personality", "debate_style", mode="before")
+    @classmethod
+    def _require_non_empty_persona_profile_fields(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Persona profile fields must be non-empty.")
+        return normalized
+
+
+class PersonaDefinition(BaseModel):
+    """Validated metadata and prompt content for a persona artifact."""
+
+    persona_id: str
+    name: str
+    description: str = ""
+    source: Literal["builtin", "custom", "generated"] = "builtin"
+    version: str = "1.0"
+    tags: list[str] = Field(default_factory=list)
+    is_active: bool = True
+    content: str
+    content_path: str | None = None
+
+    @field_validator("persona_id", "name", "content", mode="before")
+    @classmethod
+    def _require_non_empty_persona_fields(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Persona id, name, and content must be non-empty.")
+        return normalized
+
+
+class PersonaCreateRequest(BaseModel):
+    """API payload for saving a custom persona."""
+
+    persona_id: str
+    content: str
+
 
 class GeneratedPersona(BaseModel):
     persona_id: str
@@ -516,6 +640,54 @@ class ExperimentRun(BaseModel):
     human_judge_packet: HumanJudgePacket | None = None
     error_message: str | None = None
 
+    def touch(self) -> None:
+        """Refresh the run timestamp after a state mutation."""
+        self.updated_at = utc_now()
+
+    def mark_planning(self, context_bundle: FrozenContextBundle) -> None:
+        """Transition the run into the planning phase with a frozen context."""
+        self.status = RunStatus.PLANNING
+        self.context_bundle = context_bundle
+        self.touch()
+
+    def mark_debating(self) -> None:
+        """Transition the run into an active debate round."""
+        self.status = RunStatus.DEBATING
+        self.touch()
+
+    def pause_for_human(self, packet: HumanJudgePacket) -> None:
+        """Pause the run and persist the latest human-judge review packet."""
+        self.status = RunStatus.AWAITING_HUMAN_JUDGE
+        self.human_judge_packet = packet
+        self.touch()
+
+    def append_debate_round(self, debate_round: DebateRound) -> None:
+        """Record a completed debate round and refresh timestamps."""
+        self.debate_rounds.append(debate_round)
+        self.touch()
+
+    def complete(
+        self,
+        verdict: JudgeVerdict,
+        stop_reason: str,
+        final_report: FinalReport | None = None,
+    ) -> None:
+        """Mark the run complete and attach the terminal artifacts."""
+        self.verdict = verdict
+        self.final_report = final_report
+        self.status = RunStatus.COMPLETED
+        self.stop_reason = stop_reason
+        self.error_message = None
+        self.human_judge_packet = None
+        self.touch()
+
+    def fail(self, exc: Exception) -> None:
+        """Mark the run as failed while keeping a readable error payload."""
+        self.status = RunStatus.FAILED
+        self.error_message = str(exc)
+        self.stop_reason = "run_failed"
+        self.touch()
+
 
 class RunListItem(BaseModel):
     run_id: str
@@ -539,9 +711,26 @@ class RunCreateRequest(BaseModel):
     paid_provider_policy: PaidProviderPolicy = Field(default_factory=PaidProviderPolicy)
     budget_policy: BudgetPolicy = Field(default_factory=BudgetPolicy)
 
+    @model_validator(mode="after")
+    def validate_request(self) -> "RunCreateRequest":
+        if not self.agents:
+            raise ValueError("At least one agent is required.")
+        agent_ids = [agent.agent_id for agent in self.agents]
+        if len(agent_ids) != len(set(agent_ids)):
+            raise ValueError("Agent ids must be unique within a run.")
+        return self
+
 
 class HumanJudgeActionRequest(BaseModel):
     action: Literal["request_round", "select_winner", "merge_plans", "request_revision"]
     round_type: RoundType | None = None
     winning_plan_ids: list[str] = Field(default_factory=list)
     instructions: str | None = None
+
+    @model_validator(mode="after")
+    def validate_action_requirements(self) -> "HumanJudgeActionRequest":
+        if self.action == "select_winner" and not self.winning_plan_ids:
+            raise ValueError("select_winner requires at least one winning plan id.")
+        if self.action == "merge_plans" and len(self.winning_plan_ids) < 2:
+            raise ValueError("merge_plans requires at least two winning plan ids.")
+        return self

@@ -1,4 +1,5 @@
 """Tests for QA fixes: bug fixes, feature improvements, and CLI changes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -70,17 +71,25 @@ def build_orchestrator(tmp_path):
 
 # ── Bug fix: MockProvider produces varied plans ─────────────────
 
+
 def test_mock_provider_produces_different_plans_for_different_agents():
     """Same model with different agent_ids (mock vs mock_1) should produce different plans."""
     provider_same = MockProvider(model_name="x")
-    result_1 = asyncio.run(provider_same.generate("plan", "test", {"agent_id": "mock", "task_title": "Test"}))
-    result_2 = asyncio.run(provider_same.generate("plan", "test", {"agent_id": "mock_1", "task_title": "Test"}))
+    result_1 = asyncio.run(
+        provider_same.generate("plan", "test", {"agent_id": "mock", "task_title": "Test"})
+    )
+    result_2 = asyncio.run(
+        provider_same.generate("plan", "test", {"agent_id": "mock_1", "task_title": "Test"})
+    )
     summary_1 = result_1.json_payload.get("summary", "")
     summary_2 = result_2.json_payload.get("summary", "")
-    assert summary_1 != summary_2, "Same model with different agent_ids should produce different plans"
+    assert summary_1 != summary_2, (
+        "Same model with different agent_ids should produce different plans"
+    )
 
 
 # ── Bug fix: No duplicate strengths in merged verdict ───────────
+
 
 def test_merged_verdict_has_no_duplicate_strengths():
     """Merged verdict should deduplicate strengths from both plans."""
@@ -104,8 +113,9 @@ def test_merged_verdict_has_no_duplicate_strengths():
 
     merged = judge._build_merged_plan(plan_a, plan_b)
     # Check no duplicates in merged strengths
-    assert len(merged.strengths) == len(set(merged.strengths)), \
+    assert len(merged.strengths) == len(set(merged.strengths)), (
         f"Merged strengths have duplicates: {merged.strengths}"
+    )
 
 
 def test_automated_finalize_deduplicates_strengths():
@@ -126,7 +136,9 @@ def test_automated_finalize_deduplicates_strengths():
 
     # Create plans with identical scores and same strengths
     plan_a = PlanDocument(
-        agent_id="a", display_name="A", summary="Plan A",
+        agent_id="a",
+        display_name="A",
+        summary="Plan A",
         strengths=["Reusable", "Scalable"],
         evidence_basis=["e1", "e2", "e3"],
         assumptions=["a1"],
@@ -135,7 +147,9 @@ def test_automated_finalize_deduplicates_strengths():
         weaknesses=["w1"],
     )
     plan_b = PlanDocument(
-        agent_id="b", display_name="B", summary="Plan B",
+        agent_id="b",
+        display_name="B",
+        summary="Plan B",
         strengths=["Reusable", "Fast"],
         evidence_basis=["e1", "e2", "e3"],
         assumptions=["a1"],
@@ -148,28 +162,35 @@ def test_automated_finalize_deduplicates_strengths():
 
     verdict = judge._automated_finalize(run, None)
     assert verdict.verdict_type.value == "merged"
-    assert len(verdict.selected_strengths) == len(set(verdict.selected_strengths)), \
+    assert len(verdict.selected_strengths) == len(set(verdict.selected_strengths)), (
         f"Verdict strengths have duplicates: {verdict.selected_strengths}"
+    )
 
 
 # ── Bug fix: CLI exit codes ────────────────────────────────────
+
 
 def test_cli_show_nonexistent_returns_nonzero():
     """'colosseum show nonexistent' should exit with code 1."""
     result = subprocess.run(
         [sys.executable, "-m", "colosseum.cli", "show", "nonexistent_run_xyz"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode != 0, "show for nonexistent run should exit non-zero"
 
 
 # ── Feature: --version flag ──────────────────────────────────
 
+
 def test_cli_version():
     """'colosseum --version' should print version."""
     result = subprocess.run(
         [sys.executable, "-m", "colosseum.cli", "--version"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0
     assert "0.1.0" in result.stdout
@@ -177,11 +198,24 @@ def test_cli_version():
 
 # ── Feature: --mock flag ─────────────────────────────────────
 
+
 def test_cli_mock_flag_runs_debate():
     """'colosseum debate --topic X --mock --depth 1' should complete."""
     result = subprocess.run(
-        [sys.executable, "-m", "colosseum.cli", "debate", "--topic", "Mock flag test", "--mock", "--depth", "1"],
-        capture_output=True, text=True, timeout=30,
+        [
+            sys.executable,
+            "-m",
+            "colosseum.cli",
+            "debate",
+            "--topic",
+            "Mock flag test",
+            "--mock",
+            "--depth",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0
     assert "VERDICT" in result.stdout
@@ -189,11 +223,25 @@ def test_cli_mock_flag_runs_debate():
 
 # ── Feature: --json flag ─────────────────────────────────────
 
+
 def test_cli_json_output_is_valid_json():
     """'colosseum debate --topic X --mock --depth 1 --json' should output valid JSON."""
     result = subprocess.run(
-        [sys.executable, "-m", "colosseum.cli", "debate", "--topic", "JSON test", "--mock", "--depth", "1", "--json"],
-        capture_output=True, text=True, timeout=30,
+        [
+            sys.executable,
+            "-m",
+            "colosseum.cli",
+            "debate",
+            "--topic",
+            "JSON test",
+            "--mock",
+            "--depth",
+            "1",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0
     data = json.loads(result.stdout)
@@ -204,16 +252,20 @@ def test_cli_json_output_is_valid_json():
 
 # ── Feature: delete command ──────────────────────────────────
 
+
 def test_cli_delete_nonexistent():
     """'colosseum delete nonexistent' should fail gracefully."""
     result = subprocess.run(
         [sys.executable, "-m", "colosseum.cli", "delete", "nonexistent_run_xyz"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode != 0
 
 
 # ── API: Comprehensive endpoint tests ────────────────────────
+
 
 def test_api_create_run_with_mock_agents(tmp_path):
     """Create a full run with mock agents via API."""
@@ -232,8 +284,16 @@ def test_api_create_run_with_mock_agents(tmp_path):
                     )
                 ],
                 agents=[
-                    AgentConfig(agent_id="a", display_name="A", provider=ProviderConfig(type=ProviderType.MOCK, model="a")),
-                    AgentConfig(agent_id="b", display_name="B", provider=ProviderConfig(type=ProviderType.MOCK, model="b")),
+                    AgentConfig(
+                        agent_id="a",
+                        display_name="A",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="a"),
+                    ),
+                    AgentConfig(
+                        agent_id="b",
+                        display_name="B",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="b"),
+                    ),
                 ],
                 judge=JudgeConfig(mode=JudgeMode.AUTOMATED),
             )
@@ -261,8 +321,16 @@ def test_api_sse_stream_delivers_all_phases(tmp_path):
                     )
                 ],
                 agents=[
-                    AgentConfig(agent_id="a", display_name="A", provider=ProviderConfig(type=ProviderType.MOCK, model="a")),
-                    AgentConfig(agent_id="b", display_name="B", provider=ProviderConfig(type=ProviderType.MOCK, model="b")),
+                    AgentConfig(
+                        agent_id="a",
+                        display_name="A",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="a"),
+                    ),
+                    AgentConfig(
+                        agent_id="b",
+                        display_name="B",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="b"),
+                    ),
                 ],
                 judge=JudgeConfig(mode=JudgeMode.AUTOMATED),
             ),
@@ -284,6 +352,59 @@ def test_api_sse_stream_delivers_all_phases(tmp_path):
     assert "complete" in phases
 
 
+def test_api_sse_complete_event_has_verdict_aware_final_report(tmp_path):
+    """SSE completion payload should synthesize the final report from the real verdict."""
+    orchestrator = build_orchestrator(tmp_path)
+    response = asyncio.run(
+        create_run_stream(
+            RunCreateRequest(
+                project_name="SSE Verdict Report",
+                task=TaskSpec(title="SSE Verdict Report", problem_statement="test"),
+                context_sources=[
+                    ContextSourceInput(
+                        source_id="t",
+                        kind=ContextSourceKind.INLINE_TEXT,
+                        label="t",
+                        content="x",
+                    )
+                ],
+                agents=[
+                    AgentConfig(
+                        agent_id="a",
+                        display_name="A",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="a"),
+                    ),
+                    AgentConfig(
+                        agent_id="b",
+                        display_name="B",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="b"),
+                    ),
+                ],
+                judge=JudgeConfig(mode=JudgeMode.AUTOMATED),
+            ),
+            orchestrator=orchestrator,
+        )
+    )
+
+    async def collect_text():
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk))
+        return "".join(chunks)
+
+    text = asyncio.run(collect_text())
+    events = [json.loads(line[6:]) for line in text.split("\n") if line.startswith("data:")]
+    complete_event = next(event for event in events if event.get("phase") == "complete")
+    final_report = complete_event["final_report"]
+
+    assert complete_event["verdict"], "complete payload should include a verdict"
+    assert final_report is not None, "complete payload should include a synthesized final report"
+    assert final_report["one_line_verdict"].strip()
+    assert "ended without a final verdict" not in final_report["one_line_verdict"]
+    if complete_event["verdict"].get("verdict_type") == "merged":
+        assert "Merged recommendation" in final_report["one_line_verdict"]
+
+
 def test_api_human_judge_select_winner(tmp_path):
     """Human judge can select a winner."""
     orchestrator = build_orchestrator(tmp_path)
@@ -301,8 +422,16 @@ def test_api_human_judge_select_winner(tmp_path):
                     )
                 ],
                 agents=[
-                    AgentConfig(agent_id="a", display_name="A", provider=ProviderConfig(type=ProviderType.MOCK, model="a")),
-                    AgentConfig(agent_id="b", display_name="B", provider=ProviderConfig(type=ProviderType.MOCK, model="b")),
+                    AgentConfig(
+                        agent_id="a",
+                        display_name="A",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="a"),
+                    ),
+                    AgentConfig(
+                        agent_id="b",
+                        display_name="B",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="b"),
+                    ),
                 ],
                 judge=JudgeConfig(mode=JudgeMode.HUMAN),
             )
@@ -326,13 +455,27 @@ def test_api_human_judge_select_winner(tmp_path):
 
 # ── Bug fix: Repeated -g flags accumulate gladiators ─────────
 
+
 def test_cli_repeated_g_flags_accumulate():
     """'debate -g mock:a -g mock:b' should accumulate into 2 gladiators."""
     result = subprocess.run(
-        [sys.executable, "-m", "colosseum.cli", "debate",
-         "-g", "mock:alpha", "-g", "mock:beta",
-         "--topic", "Repeated -g test", "--depth", "1"],
-        capture_output=True, text=True, timeout=30,
+        [
+            sys.executable,
+            "-m",
+            "colosseum.cli",
+            "debate",
+            "-g",
+            "mock:alpha",
+            "-g",
+            "mock:beta",
+            "--topic",
+            "Repeated -g test",
+            "--depth",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, (
         f"Repeated -g should work but got exit {result.returncode}: {result.stderr}"
@@ -343,10 +486,24 @@ def test_cli_repeated_g_flags_accumulate():
 def test_cli_mixed_g_flag_styles():
     """'-g a b -g c' should accumulate all 3 gladiators."""
     result = subprocess.run(
-        [sys.executable, "-m", "colosseum.cli", "debate",
-         "-g", "mock:a", "mock:b", "-g", "mock:c",
-         "--topic", "Mixed -g test", "--depth", "1"],
-        capture_output=True, text=True, timeout=30,
+        [
+            sys.executable,
+            "-m",
+            "colosseum.cli",
+            "debate",
+            "-g",
+            "mock:a",
+            "mock:b",
+            "-g",
+            "mock:c",
+            "--topic",
+            "Mixed -g test",
+            "--depth",
+            "1",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0, (
         f"Mixed -g styles should work but got exit {result.returncode}: {result.stderr}"
@@ -355,30 +512,81 @@ def test_cli_mixed_g_flag_styles():
 
 # ── Bug fix: JSON output has no ANSI escape codes ────────────
 
+
 def test_cli_json_output_no_ansi():
     """--json output must not contain ANSI escape sequences."""
     result = subprocess.run(
-        [sys.executable, "-m", "colosseum.cli", "debate",
-         "--topic", "ANSI test", "--mock", "--depth", "1", "--json"],
-        capture_output=True, text=True, timeout=30,
+        [
+            sys.executable,
+            "-m",
+            "colosseum.cli",
+            "debate",
+            "--topic",
+            "ANSI test",
+            "--mock",
+            "--depth",
+            "1",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
     )
     assert result.returncode == 0
     assert "\x1b" not in result.stdout, "ANSI escape codes leaked into JSON output"
     json.loads(result.stdout)  # must parse cleanly
 
 
+def test_cli_json_output_includes_verdict_details(tmp_path):
+    """--json output should preserve strengths, risks, and merged-plan details."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "colosseum.cli",
+            "debate",
+            "--topic",
+            "JSON verdict details",
+            "--mock",
+            "--depth",
+            "1",
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    verdict = data["verdict"]
+    assert "selected_strengths" in verdict
+    assert "rejected_risks" in verdict
+    assert isinstance(verdict["selected_strengths"], list)
+    assert isinstance(verdict["rejected_risks"], list)
+    if verdict["type"] == "merged":
+        assert verdict["synthesized_plan"]["summary"]
+
+
 # ── Internal: MockProvider all operations ─────────────────────
+
 
 def test_mock_provider_debate_operation():
     """MockProvider debate should return structured critique/defense points."""
     provider = MockProvider(model_name="test")
-    result = asyncio.run(provider.generate("debate", "inst", {
-        "round_type": "critique",
-        "own_plan_id": "p1",
-        "own_display_name": "Agent A",
-        "other_plan_ids": ["p2"],
-        "other_plan_labels": ["Agent B"],
-    }))
+    result = asyncio.run(
+        provider.generate(
+            "debate",
+            "inst",
+            {
+                "round_type": "critique",
+                "own_plan_id": "p1",
+                "own_display_name": "Agent A",
+                "other_plan_ids": ["p2"],
+                "other_plan_labels": ["Agent B"],
+            },
+        )
+    )
     payload = result.json_payload
     assert "critique_points" in payload
     assert "defense_points" in payload
@@ -388,9 +596,15 @@ def test_mock_provider_debate_operation():
 def test_mock_provider_judge_operation():
     """MockProvider judge should return action and confidence."""
     provider = MockProvider(model_name="test")
-    result = asyncio.run(provider.generate("judge", "inst", {
-        "suggested_action": "continue_debate",
-    }))
+    result = asyncio.run(
+        provider.generate(
+            "judge",
+            "inst",
+            {
+                "suggested_action": "continue_debate",
+            },
+        )
+    )
     payload = result.json_payload
     assert payload["action"] == "continue_debate"
     assert 0 < payload["confidence"] <= 1.0
@@ -400,9 +614,15 @@ def test_mock_provider_judge_operation():
 def test_mock_provider_synthesis_operation():
     """MockProvider synthesis should reference basis plan IDs."""
     provider = MockProvider(model_name="test")
-    result = asyncio.run(provider.generate("synthesis", "inst", {
-        "basis_plan_ids": ["plan_a", "plan_b"],
-    }))
+    result = asyncio.run(
+        provider.generate(
+            "synthesis",
+            "inst",
+            {
+                "basis_plan_ids": ["plan_a", "plan_b"],
+            },
+        )
+    )
     payload = result.json_payload
     assert "plan_a" in payload["strengths"][1]
     assert "plan_b" in payload["strengths"][1]
@@ -416,6 +636,7 @@ def test_mock_provider_unknown_operation():
 
 
 # ── Internal: UsageMetrics & BudgetLedger ─────────────────────
+
 
 def test_usage_metrics_add_and_computed_field():
     """UsageMetrics.add() accumulates and total_tokens is computed."""
@@ -444,6 +665,7 @@ def test_budget_ledger_record():
 
 
 # ── Internal: Normalizer fallback handling ────────────────────
+
 
 def test_normalizer_plan_from_valid_json():
     """Normalizer should produce PlanDocument from valid JSON payload."""
@@ -477,32 +699,58 @@ def test_normalizer_plan_from_empty_payload():
 
 # ── CLI: Help text for every subcommand ───────────────────────
 
-@pytest.mark.parametrize("subcmd", [
-    "serve", "models", "personas", "history", "show", "delete", "check", "debate",
-])
+
+@pytest.mark.parametrize(
+    "subcmd",
+    [
+        "serve",
+        "models",
+        "personas",
+        "history",
+        "show",
+        "delete",
+        "check",
+        "debate",
+    ],
+)
 def test_cli_subcommand_help(subcmd):
     """Every subcommand --help should exit 0."""
     result = subprocess.run(
         [sys.executable, "-m", "colosseum.cli", subcmd, "--help"],
-        capture_output=True, text=True, timeout=10,
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode == 0, f"{subcmd} --help failed: {result.stderr}"
 
 
 # ── CLI: Invalid depth values ─────────────────────────────────
 
+
 @pytest.mark.parametrize("depth", ["0", "6", "999", "-1"])
 def test_cli_invalid_depth_rejected(depth):
     """Invalid depth values should be rejected by argparse."""
     result = subprocess.run(
-        [sys.executable, "-m", "colosseum.cli", "debate",
-         "--mock", "--topic", "T", "--depth", depth],
-        capture_output=True, text=True, timeout=10,
+        [
+            sys.executable,
+            "-m",
+            "colosseum.cli",
+            "debate",
+            "--mock",
+            "--topic",
+            "T",
+            "--depth",
+            depth,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
     )
     assert result.returncode != 0
 
 
 # ── API: Error handling ───────────────────────────────────────
+
 
 def test_api_get_nonexistent_run(tmp_path):
     """GET /runs/nonexistent should raise HTTP 404."""
@@ -529,8 +777,16 @@ def test_api_human_judge_merge_plans(tmp_path):
                     )
                 ],
                 agents=[
-                    AgentConfig(agent_id="a", display_name="A", provider=ProviderConfig(type=ProviderType.MOCK, model="a")),
-                    AgentConfig(agent_id="b", display_name="B", provider=ProviderConfig(type=ProviderType.MOCK, model="b")),
+                    AgentConfig(
+                        agent_id="a",
+                        display_name="A",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="a"),
+                    ),
+                    AgentConfig(
+                        agent_id="b",
+                        display_name="B",
+                        provider=ProviderConfig(type=ProviderType.MOCK, model="b"),
+                    ),
                 ],
                 judge=JudgeConfig(mode=JudgeMode.HUMAN),
             )
@@ -552,17 +808,78 @@ def test_api_human_judge_merge_plans(tmp_path):
     assert updated.verdict.verdict_type.value == "merged"
 
 
+def test_cli_show_displays_merged_plan_summary(monkeypatch, capsys):
+    """show should render the merged plan summary for merged verdicts."""
+    from argparse import Namespace
+
+    import colosseum.bootstrap as bootstrap
+    from colosseum.cli import cmd_show
+    from colosseum.core.models import JudgeVerdict, RunStatus, VerdictType
+
+    plan_a = PlanDocument(agent_id="a", display_name="A", summary="Plan A")
+    plan_b = PlanDocument(agent_id="b", display_name="B", summary="Plan B")
+    merged_plan = PlanDocument(
+        agent_id="merged",
+        display_name="Merged",
+        summary="Merged plan summary",
+    )
+    run = ExperimentRun(
+        project_name="Show merged",
+        task=TaskSpec(title="Merged display", problem_statement="test"),
+        agents=[
+            AgentConfig(
+                agent_id="a",
+                display_name="A",
+                provider=ProviderConfig(type=ProviderType.MOCK, model="a"),
+            ),
+            AgentConfig(
+                agent_id="b",
+                display_name="B",
+                provider=ProviderConfig(type=ProviderType.MOCK, model="b"),
+            ),
+        ],
+        judge=JudgeConfig(mode=JudgeMode.AUTOMATED),
+    )
+    run.status = RunStatus.COMPLETED
+    run.plans = [plan_a, plan_b]
+    run.verdict = JudgeVerdict(
+        judge_mode=JudgeMode.AUTOMATED,
+        verdict_type=VerdictType.MERGED,
+        winning_plan_ids=[plan_a.plan_id, plan_b.plan_id],
+        synthesized_plan=merged_plan,
+        rationale="Combined the strongest parts of both plans.",
+        selected_strengths=["Strong testing", "Concrete architecture"],
+        rejected_risks=["Unclear rollout"],
+        stop_reason="judge_finalize",
+        confidence=0.82,
+    )
+
+    class FakeOrchestrator:
+        def load_run(self, run_id: str) -> ExperimentRun:
+            assert run_id == run.run_id
+            return run
+
+    monkeypatch.setattr(bootstrap, "get_orchestrator", lambda: FakeOrchestrator())
+    cmd_show(Namespace(run_id=run.run_id))
+
+    output = capsys.readouterr().out
+    assert "Merged Plan:" in output
+    assert "Merged plan summary" in output
+
+
 def test_api_sse_rejects_exhausted_ai_judge(tmp_path):
     orchestrator = build_orchestrator(tmp_path)
-    orchestrator.provider_runtime.upsert_quota_states([
-        ProviderQuotaState(
-            quota_key="paid:openai",
-            label="OpenAI",
-            billing_tier=BillingTier.PAID,
-            cycle_token_limit=500,
-            remaining_tokens=0,
-        )
-    ])
+    orchestrator.provider_runtime.upsert_quota_states(
+        [
+            ProviderQuotaState(
+                quota_key="paid:openai",
+                label="OpenAI",
+                billing_tier=BillingTier.PAID,
+                cycle_token_limit=500,
+                remaining_tokens=0,
+            )
+        ]
+    )
 
     request = RunCreateRequest(
         project_name="SSE Judge",
@@ -576,8 +893,16 @@ def test_api_sse_rejects_exhausted_ai_judge(tmp_path):
             )
         ],
         agents=[
-            AgentConfig(agent_id="a", display_name="A", provider=ProviderConfig(type=ProviderType.MOCK, model="a")),
-            AgentConfig(agent_id="b", display_name="B", provider=ProviderConfig(type=ProviderType.MOCK, model="b")),
+            AgentConfig(
+                agent_id="a",
+                display_name="A",
+                provider=ProviderConfig(type=ProviderType.MOCK, model="a"),
+            ),
+            AgentConfig(
+                agent_id="b",
+                display_name="B",
+                provider=ProviderConfig(type=ProviderType.MOCK, model="b"),
+            ),
         ],
         judge=JudgeConfig(
             mode=JudgeMode.AI,

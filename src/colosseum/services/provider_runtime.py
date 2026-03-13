@@ -74,7 +74,9 @@ class ProviderRuntimeService:
         if blocked:
             raise ValueError("Paid quota exhausted. " + " ".join(blocked))
 
-    def validate_provider_selectable(self, provider: ProviderConfig, label: str = "Provider") -> None:
+    def validate_provider_selectable(
+        self, provider: ProviderConfig, label: str = "Provider"
+    ) -> None:
         reason = self.selection_block_reason(provider)
         if reason:
             raise ValueError(f"{label} is not selectable because {reason}")
@@ -141,7 +143,8 @@ class ProviderRuntimeService:
                     actor_id=actor_id,
                     actor_label=actor_label,
                     provider_label=self.provider_label(current_provider),
-                    message=str(exc) or f"{self.provider_label(current_provider)} reported quota exhaustion.",
+                    message=str(exc)
+                    or f"{self.provider_label(current_provider)} reported quota exhaustion.",
                     metadata={"operation": operation},
                 )
                 current_provider = await self._recover_after_exhaustion(
@@ -159,7 +162,9 @@ class ProviderRuntimeService:
             self._finalize_reservation(reservation, result.usage.total_tokens)
             return ProviderExecution(result=result, effective_provider=current_provider)
 
-        raise RuntimeError(f"Could not complete {operation} for {actor_label} after repeated quota exhaustion.")
+        raise RuntimeError(
+            f"Could not complete {operation} for {actor_label} after repeated quota exhaustion."
+        )
 
     def quota_key_for_provider(self, provider: ProviderConfig) -> str | None:
         if provider.quota_key:
@@ -247,7 +252,9 @@ class ProviderRuntimeService:
         provider_label = self.provider_label(current_provider)
         if policy.on_exhaustion == PaidExhaustionAction.SWITCH_TO_FREE:
             if not policy.fallback_provider:
-                raise RuntimeError(f"{provider_label} quota is exhausted and no free fallback is configured.")
+                raise RuntimeError(
+                    f"{provider_label} quota is exhausted and no free fallback is configured."
+                )
             fallback = policy.fallback_provider.model_copy(deep=True)
             self._append_event(
                 run,
@@ -263,11 +270,18 @@ class ProviderRuntimeService:
         if policy.on_exhaustion == PaidExhaustionAction.WAIT_FOR_RESET:
             quota_key = self.quota_key_for_provider(original_provider)
             if not quota_key:
-                raise RuntimeError(f"{provider_label} quota is exhausted and cannot be reset automatically.")
+                raise RuntimeError(
+                    f"{provider_label} quota is exhausted and cannot be reset automatically."
+                )
             delay = self._seconds_until_reset(quota_key)
             if delay is None:
-                raise RuntimeError(f"{provider_label} quota is exhausted and no reset time is configured.")
-            if policy.wait_for_reset_max_seconds is not None and delay > policy.wait_for_reset_max_seconds:
+                raise RuntimeError(
+                    f"{provider_label} quota is exhausted and no reset time is configured."
+                )
+            if (
+                policy.wait_for_reset_max_seconds is not None
+                and delay > policy.wait_for_reset_max_seconds
+            ):
                 raise RuntimeError(
                     f"{provider_label} quota resets in {int(delay)} seconds, which exceeds the wait limit."
                 )
@@ -329,7 +343,9 @@ class ProviderRuntimeService:
             states[quota_key] = state
             self._save_states_unlocked(states)
 
-    def _finalize_reservation(self, reservation: QuotaReservation | None, actual_tokens: int) -> None:
+    def _finalize_reservation(
+        self, reservation: QuotaReservation | None, actual_tokens: int
+    ) -> None:
         if reservation is None:
             return
         delta = actual_tokens - reservation.reserved_tokens
@@ -371,7 +387,9 @@ class ProviderRuntimeService:
         return self.budget_manager.estimate_tokens(instructions) + completion_reserve
 
     def _is_tracked(self, state: ProviderQuotaState) -> bool:
-        return bool(state.cycle_token_limit > 0 or state.remaining_tokens > 0 or state.reset_at is not None)
+        return bool(
+            state.cycle_token_limit > 0 or state.remaining_tokens > 0 or state.reset_at is not None
+        )
 
     def _append_event(
         self,
@@ -416,5 +434,8 @@ class ProviderRuntimeService:
         return states
 
     def _save_states_unlocked(self, states: dict[str, ProviderQuotaState]) -> None:
-        payload = [state.model_dump(mode="json") for state in sorted(states.values(), key=lambda item: item.label)]
+        payload = [
+            state.model_dump(mode="json")
+            for state in sorted(states.values(), key=lambda item: item.label)
+        ]
         self.quota_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")

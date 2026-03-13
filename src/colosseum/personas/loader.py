@@ -1,69 +1,54 @@
+"""Compatibility wrapper for legacy callers that still import PersonaLoader."""
+
 from __future__ import annotations
 
-import re
 from pathlib import Path
+from typing import Any
 
-BUILTIN_DIR = Path(__file__).resolve().parent / "builtin"
-CUSTOM_DIR = Path(__file__).resolve().parent / "custom"
-
-
-def _parse_persona_file(path: Path) -> dict:
-    """Parse a persona MD file and extract metadata."""
-    pid = path.stem
-    text = path.read_text(encoding="utf-8")
-    lines = text.strip().split("\n")
-    name = pid.replace("_", " ").title()
-    desc = ""
-    for line in lines:
-        if line.startswith("# "):
-            name = line[2:].strip()
-        elif line.startswith("> ") and not desc:
-            desc = line[2:].strip()
-    return {"persona_id": pid, "name": name, "description": desc}
+from colosseum.personas.registry import BUILTIN_DIR, CUSTOM_DIR, PersonaRegistry
 
 
 class PersonaLoader:
-    def list_personas(self) -> list[dict]:
-        results: list[dict] = []
-        # Builtin personas
-        if BUILTIN_DIR.exists():
-            for f in sorted(BUILTIN_DIR.glob("*.md")):
-                meta = _parse_persona_file(f)
-                meta["source"] = "builtin"
-                results.append(meta)
-        # Custom personas
-        if CUSTOM_DIR.exists():
-            for f in sorted(CUSTOM_DIR.glob("*.md")):
-                meta = _parse_persona_file(f)
-                meta["source"] = "custom"
-                results.append(meta)
-        return results
+    """Preserve the historical loader API on top of the typed registry."""
+
+    def __init__(
+        self,
+        builtin_dir: Path | None = None,
+        custom_dir: Path | None = None,
+    ) -> None:
+        self.registry = PersonaRegistry(
+            builtin_dir=builtin_dir or BUILTIN_DIR,
+            custom_dir=custom_dir or CUSTOM_DIR,
+        )
+
+    def list_personas(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "persona_id": persona.persona_id,
+                "name": persona.name,
+                "description": persona.description,
+                "source": persona.source,
+                "version": persona.version,
+                "tags": persona.tags,
+                "active": persona.is_active,
+            }
+            for persona in self.registry.list_personas()
+        ]
 
     def load_persona(self, persona_id: str) -> str | None:
-        # Check builtin first, then custom
-        for directory in (BUILTIN_DIR, CUSTOM_DIR):
-            path = directory / f"{persona_id}.md"
-            if path.exists():
-                return path.read_text(encoding="utf-8")
-        return None
+        return self.registry.get_persona_content(persona_id)
 
-    def save_custom_persona(self, persona_id: str, content: str) -> dict:
-        """Save a custom persona MD file. Returns metadata."""
-        CUSTOM_DIR.mkdir(parents=True, exist_ok=True)
-        # Sanitize persona_id
-        safe_id = re.sub(r"[^a-z0-9_]", "_", persona_id.lower().strip())
-        if not safe_id:
-            safe_id = "custom_persona"
-        path = CUSTOM_DIR / f"{safe_id}.md"
-        path.write_text(content, encoding="utf-8")
-        meta = _parse_persona_file(path)
-        meta["source"] = "custom"
-        return meta
+    def save_custom_persona(self, persona_id: str, content: str) -> dict[str, Any]:
+        persona = self.registry.save_custom_persona(persona_id, content)
+        return {
+            "persona_id": persona.persona_id,
+            "name": persona.name,
+            "description": persona.description,
+            "source": persona.source,
+            "version": persona.version,
+            "tags": persona.tags,
+            "active": persona.is_active,
+        }
 
     def delete_custom_persona(self, persona_id: str) -> bool:
-        """Delete a custom persona. Returns True if deleted."""
-        path = CUSTOM_DIR / f"{persona_id}.md"
-        if path.exists():
-            path.unlink()
-            return True
-        return False
+        return self.registry.delete_custom_persona(persona_id)

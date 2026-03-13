@@ -124,15 +124,17 @@ def test_ai_judge_requires_provider(tmp_path):
 
 def test_ai_judge_rejects_exhausted_paid_provider(tmp_path):
     orchestrator = build_orchestrator(tmp_path)
-    orchestrator.provider_runtime.upsert_quota_states([
-        ProviderQuotaState(
-            quota_key="paid:openai",
-            label="OpenAI",
-            billing_tier=BillingTier.PAID,
-            cycle_token_limit=1000,
-            remaining_tokens=0,
-        )
-    ])
+    orchestrator.provider_runtime.upsert_quota_states(
+        [
+            ProviderQuotaState(
+                quota_key="paid:openai",
+                label="OpenAI",
+                billing_tier=BillingTier.PAID,
+                cycle_token_limit=1000,
+                remaining_tokens=0,
+            )
+        ]
+    )
     request = build_request(JudgeMode.AI)
     request.judge.provider = ProviderConfig(
         type=ProviderType.CODEX_CLI,

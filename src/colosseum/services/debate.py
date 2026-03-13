@@ -5,8 +5,6 @@ import logging
 from difflib import SequenceMatcher
 from statistics import mean
 
-logger = logging.getLogger(__name__)
-
 from colosseum.core.config import (
     build_evidence_policy,
     MAX_DEBATE_MEMORY_CHARS,
@@ -24,8 +22,11 @@ from colosseum.core.models import (
     utc_now,
 )
 from colosseum.services.budget import BudgetManager
+from colosseum.services.context_media import extract_image_inputs, summarize_image_inputs
 from colosseum.services.normalizers import ResponseNormalizer
 from colosseum.services.provider_runtime import ProviderRuntimeService
+
+logger = logging.getLogger(__name__)
 
 
 class DebateEngine:
@@ -47,7 +48,11 @@ class DebateEngine:
         instructions: str | None = None,
     ) -> DebateRound:
         round_index = len(run.debate_rounds) + 1
+        if not run.plans:
+            raise ValueError("Cannot start a debate round without generated plans.")
         plan_map = {plan.agent_id: plan for plan in run.plans}
+        if not plan_map:
+            raise ValueError("Cannot start a debate round without a plan map.")
         image_inputs = self._image_inputs(run)
         image_summary = self._image_summary(run)
         round_timeout = run.budget_policy.timeout_for_round(round_index)
@@ -79,10 +84,14 @@ class DebateEngine:
                         "own_plan_id": plan.plan_id,
                         "own_display_name": plan.display_name,
                         "other_plan_ids": [
-                            candidate.plan_id for candidate in run.plans if candidate.plan_id != plan.plan_id
+                            candidate.plan_id
+                            for candidate in run.plans
+                            if candidate.plan_id != plan.plan_id
                         ],
                         "other_plan_labels": [
-                            candidate.display_name for candidate in run.plans if candidate.plan_id != plan.plan_id
+                            candidate.display_name
+                            for candidate in run.plans
+                            if candidate.plan_id != plan.plan_id
                         ],
                         "task_title": run.task.title,
                         "response_language": run.response_language or "",
@@ -115,7 +124,12 @@ class DebateEngine:
             message.novelty_score = self._novelty_score(
                 message.content,
                 [prior.content for prior in messages]
-                + [prior.content for debate_round in run.debate_rounds for prior in debate_round.messages if prior.agent_id == agent.agent_id],
+                + [
+                    prior.content
+                    for debate_round in run.debate_rounds
+                    for prior in debate_round.messages
+                    if prior.agent_id == agent.agent_id
+                ],
             )
             message.repetitive = message.novelty_score < run.budget_policy.min_novelty_threshold
             run.budget_ledger.record(agent.agent_id, result.usage, round_index=round_index)
@@ -155,6 +169,8 @@ class DebateEngine:
         round_index = len(run.debate_rounds) + 1
         round_timeout = run.budget_policy.timeout_for_round(round_index)
         plan_map = {plan.agent_id: plan for plan in run.plans}
+        if not plan_map:
+            raise ValueError("Cannot stream a debate round without generated plans.")
         image_inputs = self._image_inputs(run)
         image_summary = self._image_summary(run)
 
@@ -190,7 +206,9 @@ class DebateEngine:
                         "own_plan_id": pl.plan_id,
                         "own_display_name": pl.display_name,
                         "other_plan_ids": [c.plan_id for c in run.plans if c.plan_id != pl.plan_id],
-                        "other_plan_labels": [c.display_name for c in run.plans if c.plan_id != pl.plan_id],
+                        "other_plan_labels": [
+                            c.display_name for c in run.plans if c.plan_id != pl.plan_id
+                        ],
                         "task_title": run.task.title,
                         "response_language": run.response_language or "",
                         "focus_hint": self._focus_hint(run),
@@ -208,7 +226,14 @@ class DebateEngine:
 
             task = asyncio.create_task(agent_generate())
             task_to_agent[task] = (agent, plan)
-            yield ("agent_thinking", {"agent_id": agent.agent_id, "display_name": agent.display_name, "round_index": round_index})
+            yield (
+                "agent_thinking",
+                {
+                    "agent_id": agent.agent_id,
+                    "display_name": agent.display_name,
+                    "round_index": round_index,
+                },
+            )
 
         messages = []
         skipped = False
@@ -292,31 +317,45 @@ class DebateEngine:
                     message.novelty_score = self._novelty_score(
                         message.content,
                         [prior.content for prior in messages]
-                        + [prior.content for dr in run.debate_rounds for prior in dr.messages if prior.agent_id == agent_result.agent_id],
+                        + [
+                            prior.content
+                            for dr in run.debate_rounds
+                            for prior in dr.messages
+                            if prior.agent_id == agent_result.agent_id
+                        ],
                     )
-                    message.repetitive = message.novelty_score < run.budget_policy.min_novelty_threshold
-                    run.budget_ledger.record(agent_result.agent_id, result.usage, round_index=round_index)
+                    message.repetitive = (
+                        message.novelty_score < run.budget_policy.min_novelty_threshold
+                    )
+                    run.budget_ledger.record(
+                        agent_result.agent_id, result.usage, round_index=round_index
+                    )
                     messages.append(message)
 
-                    yield ("agent_message", {
-                        "agent_id": agent_result.agent_id,
-                        "display_name": agent_result.display_name,
-                        "content": message.content,
-                        "critique_count": len(message.critique_points),
-                        "defense_count": len(message.defense_points),
-                        "concession_count": len(message.concessions),
-                        "novelty_score": message.novelty_score,
-                        "usage": {
-                            "prompt_tokens": message.usage.prompt_tokens,
-                            "completion_tokens": message.usage.completion_tokens,
-                            "total_tokens": message.usage.total_tokens,
+                    yield (
+                        "agent_message",
+                        {
+                            "agent_id": agent_result.agent_id,
+                            "display_name": agent_result.display_name,
+                            "content": message.content,
+                            "critique_count": len(message.critique_points),
+                            "defense_count": len(message.defense_points),
+                            "concession_count": len(message.concessions),
+                            "novelty_score": message.novelty_score,
+                            "usage": {
+                                "prompt_tokens": message.usage.prompt_tokens,
+                                "completion_tokens": message.usage.completion_tokens,
+                                "total_tokens": message.usage.total_tokens,
+                            },
+                            "round_index": round_index,
                         },
-                        "round_index": round_index,
-                    })
+                    )
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
-                    logger.exception("Agent %s failed in round %d: %s", agent_result_cfg.agent_id, round_index, e)
+                    logger.exception(
+                        "Agent %s failed in round %d: %s", agent_result_cfg.agent_id, round_index, e
+                    )
 
             if skipped:
                 break
@@ -330,11 +369,17 @@ class DebateEngine:
                     pass
 
         if cancelled:
-            yield ("round_cancelled", {"round_index": round_index, "messages_collected": len(messages)})
+            yield (
+                "round_cancelled",
+                {"round_index": round_index, "messages_collected": len(messages)},
+            )
             return
 
         if skipped:
-            yield ("round_skipped", {"round_index": round_index, "messages_collected": len(messages)})
+            yield (
+                "round_skipped",
+                {"round_index": round_index, "messages_collected": len(messages)},
+            )
 
         summary = self._summarize_round(messages, round_type)
         usage = self._aggregate_usage(messages)
@@ -397,7 +442,9 @@ class DebateEngine:
                 "Do not reopen the full debate. Stay narrowly focused on this one issue."
             ),
         }
-        round_goal = round_goals.get(round_type, "Contribute your strongest evidence-backed argument for this debate round.")
+        round_goal = round_goals.get(
+            round_type, "Contribute your strongest evidence-backed argument for this debate round."
+        )
 
         prompt_parts = [
             f"DEBATE TOPIC: {run.task.title}",
@@ -424,23 +471,25 @@ class DebateEngine:
         if debate_transcript:
             prompt_parts.append(debate_transcript)
 
-        prompt_parts.extend([
-            f"Memory summary: {memory}",
-            f"Priority focus: {agenda.question if agenda else self._focus_hint(run)}",
-            build_evidence_policy(run.encourage_internet_search),
-            (
-                f"SCOPE ENFORCEMENT: Every argument must be strictly relevant to '{run.task.title}'. "
-                "Do not introduce unrelated topics, generic best practices disconnected from this task, "
-                "or examples from outside this debate's scope. "
-                "If a point does not directly address the judge's question or a peer's argument about this task, omit it."
-            ),
-            "Constraints: You MUST directly respond to other participants' arguments. "
-            "Quote or reference specific points they made. Rebut claims you disagree with, "
-            "concede points that are well-supported, and propose alternatives where appropriate. "
-            "Do NOT simply restate your own position — engage with what others have said. "
-            "Evidence quality matters more than rhetorical force: cite the frozen bundle or state uncertainty explicitly. "
-            "Unsupported claims reduce judge confidence.",
-        ])
+        prompt_parts.extend(
+            [
+                f"Memory summary: {memory}",
+                f"Priority focus: {agenda.question if agenda else self._focus_hint(run)}",
+                build_evidence_policy(run.encourage_internet_search),
+                (
+                    f"SCOPE ENFORCEMENT: Every argument must be strictly relevant to '{run.task.title}'. "
+                    "Do not introduce unrelated topics, generic best practices disconnected from this task, "
+                    "or examples from outside this debate's scope. "
+                    "If a point does not directly address the judge's question or a peer's argument about this task, omit it."
+                ),
+                "Constraints: You MUST directly respond to other participants' arguments. "
+                "Quote or reference specific points they made. Rebut claims you disagree with, "
+                "concede points that are well-supported, and propose alternatives where appropriate. "
+                "Do NOT simply restate your own position — engage with what others have said. "
+                "Evidence quality matters more than rhetorical force: cite the frozen bundle or state uncertainty explicitly. "
+                "Unsupported claims reduce judge confidence.",
+            ]
+        )
         if has_image_inputs:
             prompt_parts.extend(
                 [
@@ -454,7 +503,11 @@ class DebateEngine:
 
         # Build prefix: language rule first, then persona
         prefix: list[str] = []
-        lang = run.response_language if run.response_language and run.response_language != "auto" else ""
+        lang = (
+            run.response_language
+            if run.response_language and run.response_language != "auto"
+            else ""
+        )
         if lang:
             prefix.append(
                 f"MANDATORY LANGUAGE: You MUST write your ENTIRE response in {lang}. "
@@ -462,11 +515,15 @@ class DebateEngine:
                 "This rule overrides all other instructions and cannot be skipped."
             )
         if agent.persona_content:
-            prefix.append("=== YOUR PERSONA ===\n" + agent.persona_content + "\n=== END PERSONA ===")
+            prefix.append(
+                "=== YOUR PERSONA ===\n" + agent.persona_content + "\n=== END PERSONA ==="
+            )
         elif agent.system_prompt:
             prefix.append("System: " + agent.system_prompt)
         if lang:
-            prompt_parts.append(f"REMINDER: Your response MUST be entirely in {lang}. No other language permitted.")
+            prompt_parts.append(
+                f"REMINDER: Your response MUST be entirely in {lang}. No other language permitted."
+            )
 
         return "\n\n".join(prefix + prompt_parts)
 
@@ -513,45 +570,14 @@ class DebateEngine:
 
         transcript = "\n".join(lines)
         if len(transcript) > max_chars:
-            transcript = transcript[:max_chars - 3].rstrip() + "..."
+            transcript = transcript[: max_chars - 3].rstrip() + "..."
         return transcript
 
     def _image_inputs(self, run: ExperimentRun) -> list[dict]:
-        if not run.context_bundle:
-            return []
-        image_inputs: list[dict] = []
-        for source in run.context_bundle.sources:
-            for fragment in source.fragments:
-                media_type = fragment.media_type or str(source.metadata.get("media_type", ""))
-                if not fragment.is_binary or not media_type.startswith("image/"):
-                    continue
-                image_inputs.append(
-                    {
-                        "source_id": source.source_id,
-                        "label": fragment.label,
-                        "path": fragment.path or source.resolved_path,
-                        "media_type": media_type,
-                        "checksum": fragment.checksum,
-                        "size_bytes": fragment.size_bytes,
-                        "inline_data": fragment.inline_data,
-                    }
-                )
-        return image_inputs
+        return extract_image_inputs(run.context_bundle)
 
     def _image_summary(self, run: ExperimentRun) -> str:
-        image_inputs = self._image_inputs(run)
-        if not image_inputs:
-            return "No shared image inputs."
-        entries = []
-        for item in image_inputs[:3]:
-            size_bytes = item.get("size_bytes") or 0
-            size_text = f"{round(size_bytes / 1024, 1)} KB" if size_bytes else "size unknown"
-            entries.append(
-                f"{item['label']} ({item['media_type']}, {size_text}, checksum {str(item['checksum'])[:8]})"
-            )
-        if len(image_inputs) > len(entries):
-            entries.append(f"+{len(image_inputs) - len(entries)} more image(s)")
-        return f"{len(image_inputs)} shared image(s): " + "; ".join(entries)
+        return summarize_image_inputs(self._image_inputs(run), limit=3)
 
     def _memory_summary(self, run: ExperimentRun) -> str:
         if not run.debate_rounds:
@@ -567,7 +593,9 @@ class DebateEngine:
         if run.judge_trace and run.judge_trace[-1].focus_areas:
             return self._compact_text(", ".join(run.judge_trace[-1].focus_areas[:3]), 120)
         if run.debate_rounds and run.debate_rounds[-1].summary.key_disagreements:
-            return self._compact_text(", ".join(run.debate_rounds[-1].summary.key_disagreements[:2]), 120)
+            return self._compact_text(
+                ", ".join(run.debate_rounds[-1].summary.key_disagreements[:2]), 120
+            )
         return "correctness, feasibility, maintainability"
 
     def _compact_text(self, text: str, limit: int) -> str:
@@ -578,7 +606,9 @@ class DebateEngine:
     def _novelty_score(self, text: str, previous_texts: list[str]) -> float:
         if not previous_texts:
             return 1.0
-        similarities = [SequenceMatcher(None, text, previous).ratio() for previous in previous_texts]
+        similarities = [
+            SequenceMatcher(None, text, previous).ratio() for previous in previous_texts
+        ]
         return round(max(0.0, 1.0 - max(similarities)), 2)
 
     def _summarize_round(self, messages: list, round_type: RoundType) -> RoundSummary:
@@ -595,7 +625,9 @@ class DebateEngine:
         disagreements = critique_topics[:5]
         strongest = defenses[:5]
         agreements = concessions[:3]
-        unresolved = list(dict.fromkeys(disagreements[:2] + [suggestion for suggestion in hybrid_suggestions[:2]]))
+        unresolved = list(
+            dict.fromkeys(disagreements[:2] + [suggestion for suggestion in hybrid_suggestions[:2]])
+        )
         moderator_note = (
             f"{round_type.value.title()} round completed with average novelty "
             f"{round(mean(message.novelty_score for message in messages), 2) if messages else 0.0}."

@@ -128,7 +128,14 @@ def generate_pdf(run: ExperimentRun) -> bytes:
 
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(*_GREY)
-    pdf.cell(0, 6, f"Run ID: {run.run_id[:8]}   |   {_ts(run.created_at)}", align="C", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(
+        0,
+        6,
+        f"Run ID: {run.run_id[:8]}   |   {_ts(run.created_at)}",
+        align="C",
+        new_x="LMARGIN",
+        new_y="NEXT",
+    )
     pdf.cell(0, 6, f"Status: {run.status.value.upper()}", align="C", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(20)
 
@@ -139,7 +146,9 @@ def generate_pdf(run: ExperimentRun) -> bytes:
 
     pdf.set_font("Helvetica", "B", 11)
     pdf.set_text_color(*_DARK)
-    stats_text = f"Agents: {agents_count}    |    Rounds: {rounds_count}    |    Tokens: {total_tokens:,}"
+    stats_text = (
+        f"Agents: {agents_count}    |    Rounds: {rounds_count}    |    Tokens: {total_tokens:,}"
+    )
     pdf.cell(0, 8, stats_text, align="C", new_x="LMARGIN", new_y="NEXT")
 
     # ════════════════════════════════════════
@@ -274,7 +283,9 @@ def generate_pdf(run: ExperimentRun) -> bytes:
         for rnd in run.debate_rounds:
             pdf.safe_page_break(40)
             agenda = rnd.agenda
-            title = agenda.title if agenda else (rnd.round_type.value if rnd.round_type else "Round")
+            title = (
+                agenda.title if agenda else (rnd.round_type.value if rnd.round_type else "Round")
+            )
             pdf.sub_title(f"Round {rnd.index}: {title}")
 
             if agenda and agenda.question:
@@ -289,7 +300,13 @@ def generate_pdf(run: ExperimentRun) -> bytes:
                 name = agent_names.get(msg.agent_id, msg.agent_id)
                 pdf.set_font("Helvetica", "B", 10)
                 pdf.set_text_color(*_STONE)
-                pdf.cell(0, 6, f"{name}  (novelty {msg.novelty_score:.2f})", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(
+                    0,
+                    6,
+                    f"{name}  (novelty {msg.novelty_score:.2f})",
+                    new_x="LMARGIN",
+                    new_y="NEXT",
+                )
                 pdf.body_text(msg.content)
 
             # Round summary
@@ -311,12 +328,24 @@ def generate_pdf(run: ExperimentRun) -> bytes:
             if adj and adj.adopted_arguments:
                 pdf.set_font("Helvetica", "BI", 9)
                 pdf.set_text_color(*_GREY)
-                pdf.cell(0, 5, f"Adopted Arguments ({len(adj.adopted_arguments)})", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(
+                    0,
+                    5,
+                    f"Adopted Arguments ({len(adj.adopted_arguments)})",
+                    new_x="LMARGIN",
+                    new_y="NEXT",
+                )
                 for adopted in adj.adopted_arguments:
                     pdf.safe_page_break(15)
                     pdf.set_font("Helvetica", "", 9)
                     pdf.set_text_color(*_DARK)
-                    pdf.multi_cell(0, 5, _wrap(f"[{adopted.claim_kind}] {adopted.display_name}: {adopted.summary}", 100))
+                    pdf.multi_cell(
+                        0,
+                        5,
+                        _wrap(
+                            f"[{adopted.claim_kind}] {adopted.display_name}: {adopted.summary}", 100
+                        ),
+                    )
                     pdf.ln(1)
 
             pdf.ln(4)

@@ -2,6 +2,7 @@
 
 Writes structured events to a JSONL file that can be tailed by the monitor.
 """
+
 from __future__ import annotations
 
 import json

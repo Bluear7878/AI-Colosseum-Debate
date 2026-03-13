@@ -3,6 +3,7 @@
 Reads events from the JSONL event log and renders a live-updating
 terminal dashboard showing phase, agents, budget, judge decisions, etc.
 """
+
 from __future__ import annotations
 
 import os
@@ -221,7 +222,9 @@ class MonitorState:
 # ── Renderer ───────────────────────────────────────────────
 
 
-def _bar(value: float, width: int = 30, filled_char: str = "\u2593", empty_char: str = "\u2591") -> str:
+def _bar(
+    value: float, width: int = 30, filled_char: str = "\u2593", empty_char: str = "\u2591"
+) -> str:
     filled = int(value * width)
     filled = min(filled, width)
     return f"{GOLD}{filled_char * filled}{DIM}{empty_char * (width - filled)}{RST}"
@@ -363,7 +366,9 @@ def render(state: MonitorState, term_height: int = 0) -> str:
         "failed": RED,
     }
     sc = status_colors.get(state.status, DIM)
-    lines.append(f"  Run:    {DIM}{run_short}{RST}    Elapsed: {BOLD}{_elapsed(state.started_at)}{RST}")
+    lines.append(
+        f"  Run:    {DIM}{run_short}{RST}    Elapsed: {BOLD}{_elapsed(state.started_at)}{RST}"
+    )
     if topic_short:
         lines.append(f"  Topic:  {BOLD}{topic_short}{RST}")
     lines.append(f"  Status: {sc}{BOLD}{state.status.upper()}{RST}")
@@ -445,7 +450,9 @@ def render(state: MonitorState, term_height: int = 0) -> str:
         lines.append("")
         lines.append(f"  {DIM}-- Verdict {'─' * 47}{RST}")
         vc = MAGENTA if state.verdict_type == "merged" else GOLD
-        lines.append(f"  {vc}{BOLD}{state.verdict_type.upper()}{RST}: {', '.join(state.verdict_winners)}")
+        lines.append(
+            f"  {vc}{BOLD}{state.verdict_type.upper()}{RST}: {', '.join(state.verdict_winners)}"
+        )
         lines.append(f"  {DIM}Confidence: {state.verdict_confidence:.2f}{RST}")
 
     # Error

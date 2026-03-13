@@ -149,5 +149,5 @@ def test_human_round_records_agenda_and_adjudication(tmp_path):
 def test_index_contains_search_toggle_and_star_cta():
     response = asyncio.run(index())
     html = Path(response.path).read_text(encoding="utf-8")
-    assert 'encourage-search-toggle' in html
-    assert 'star-link' in html
+    assert "encourage-search-toggle" in html
+    assert "star-link" in html

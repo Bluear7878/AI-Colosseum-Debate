@@ -1,4 +1,5 @@
 """Provider presets for popular CLI-based AI tools."""
+
 from __future__ import annotations
 
 import sys

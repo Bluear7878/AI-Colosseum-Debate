@@ -145,9 +145,13 @@ def test_plan_prompt_reflects_search_preference(tmp_path):
         encourage_internet_search=True,
     )
 
-    enabled_prompt = orchestrator._build_plan_prompt(run, agent, "Frozen context", image_summary="", has_image_inputs=False)
+    enabled_prompt = orchestrator._build_plan_prompt(
+        run, agent, "Frozen context", image_summary="", has_image_inputs=False
+    )
     assert "Internet search is encouraged" in enabled_prompt
 
     run.encourage_internet_search = False
-    disabled_prompt = orchestrator._build_plan_prompt(run, agent, "Frozen context", image_summary="", has_image_inputs=False)
+    disabled_prompt = orchestrator._build_plan_prompt(
+        run, agent, "Frozen context", image_summary="", has_image_inputs=False
+    )
     assert "Do not fill evidence gaps from memory" in disabled_prompt
