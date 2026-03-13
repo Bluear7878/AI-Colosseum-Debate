@@ -164,6 +164,21 @@ def test_cli_wrapper_prompt_mentions_search_policy_when_present():
     assert "Internet search is encouraged" in prompt
 
 
+def test_cli_wrapper_judge_prompt_omits_search_policy():
+    prompt = build_prompt(
+        {
+            "operation": "judge",
+            "instructions": "Judge the debate.",
+            "metadata": {
+                "search_policy": "Internet search is encouraged when the frozen bundle is insufficient.",
+            },
+        }
+    )
+
+    assert "Search policy:" not in prompt
+    assert "Do not invent new round labels." in prompt
+
+
 def test_cli_wrapper_persona_prompt_enforces_voice_without_relaxing_guardrails():
     prompt = build_prompt(
         {
