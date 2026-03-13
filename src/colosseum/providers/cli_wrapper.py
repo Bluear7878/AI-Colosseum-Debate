@@ -22,6 +22,15 @@ def read_input() -> dict:
         return json.load(f)
 
 
+def get_subprocess_timeout() -> float | None:
+    """Read COLOSSEUM_TIMEOUT env var. '0' or absent → None (no limit)."""
+    raw = os.environ.get("COLOSSEUM_TIMEOUT", "")
+    if not raw:
+        return None
+    val = int(raw)
+    return None if val == 0 else float(val)
+
+
 def build_prompt(data: dict) -> str:
     operation = data.get("operation", "plan")
     instructions = data.get("instructions", "")
@@ -97,7 +106,8 @@ def call_claude(prompt: str, model: str = "") -> str:
     cmd = ["claude", "-p", prompt, "--output-format", "json", "--dangerously-skip-permissions"]
     if model:
         cmd.extend(["--model", model])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=280, env=env)
+    sp_timeout = get_subprocess_timeout()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=sp_timeout, env=env)
     raw = result.stdout.strip()
 
     # Unwrap Claude CLI JSON envelope: {"type":"result","result":"<text>"}
@@ -118,7 +128,7 @@ def call_claude(prompt: str, model: str = "") -> str:
         cmd2 = ["claude", "-p", prompt]
         if model:
             cmd2.extend(["--model", model])
-        result = subprocess.run(cmd2, capture_output=True, text=True, timeout=280, env=env)
+        result = subprocess.run(cmd2, capture_output=True, text=True, timeout=sp_timeout, env=env)
         raw = result.stdout.strip()
 
     return raw
@@ -141,7 +151,8 @@ def call_codex(prompt: str, model: str = "") -> str:
         cmd.extend(["--model", model])
     cmd.append(prompt)
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=280)
+    sp_timeout = get_subprocess_timeout()
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=sp_timeout)
 
     # Read clean output from file
     raw = ""
@@ -170,11 +181,12 @@ def call_codex(prompt: str, model: str = "") -> str:
 
 def call_gemini(prompt: str, model: str = "") -> str:
     """Call Gemini CLI: gemini [--model <model>] -p <prompt> --yolo"""
+    sp_timeout = get_subprocess_timeout()
     cmd = ["gemini", "--yolo"]
     if model:
         cmd.extend(["--model", model])
     cmd.extend(["-p", prompt])
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=280)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=sp_timeout)
     raw = result.stdout.strip()
 
     # If stdout is empty, check stderr for clues and retry without --yolo
@@ -185,7 +197,7 @@ def call_gemini(prompt: str, model: str = "") -> str:
         if model:
             cmd_retry.extend(["--model", model])
         cmd_retry.extend(["-p", prompt])
-        result2 = subprocess.run(cmd_retry, capture_output=True, text=True, timeout=280)
+        result2 = subprocess.run(cmd_retry, capture_output=True, text=True, timeout=sp_timeout)
         raw = result2.stdout.strip()
 
         # If still empty, return a structured error so it propagates clearly
@@ -201,9 +213,10 @@ def call_gemini(prompt: str, model: str = "") -> str:
 
 def call_ollama(prompt: str, model: str = "llama3.3") -> str:
     """Call Ollama: ollama run <model> <prompt>"""
+    sp_timeout = get_subprocess_timeout()
     result = subprocess.run(
         ["ollama", "run", model, prompt],
-        capture_output=True, text=True, timeout=580
+        capture_output=True, text=True, timeout=sp_timeout
     )
     return result.stdout.strip()
 

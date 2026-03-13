@@ -868,6 +868,22 @@ skipRoundBtn.addEventListener("click", function() {
     });
 });
 
+/* ── Cancel debate ── */
+var cancelDebateBtn = document.getElementById("cancel-debate-btn");
+cancelDebateBtn.addEventListener("click", function() {
+  if (!currentRunId) return;
+  if (!confirm("Cancel the entire debate? This will stop all rounds immediately.")) return;
+  cancelDebateBtn.disabled = true;
+  cancelDebateBtn.textContent = "Cancelling...";
+  fetch("/api/runs/" + currentRunId + "/cancel", { method: "POST" })
+    .then(function(res) { return res.json(); })
+    .catch(function() {})
+    .finally(function() {
+      cancelDebateBtn.disabled = false;
+      cancelDebateBtn.textContent = "Cancel Debate";
+    });
+});
+
 /* ── Depth slider ── */
 var depthSlider = document.getElementById("depth");
 var depthVal = document.getElementById("depth-val");
@@ -1894,8 +1910,9 @@ function handleSSEEvent(evt) {
     setBattleNote("Initial reports are ready. Moving to the report screen for judge-led issue selection.", false);
     window.setTimeout(function() { openReport(currentRunId); }, 500);
   } else if (phase === "debate_round") {
-    // Show skip button
+    // Show skip and cancel buttons
     skipRoundBtn.classList.remove("hidden");
+    cancelDebateBtn.classList.remove("hidden");
     // Add round separator in debate view
     var log = document.getElementById("live-log");
     var sep = document.createElement("div");
@@ -1913,6 +1930,21 @@ function handleSSEEvent(evt) {
     appendAgentThinking(evt.display_name || evt.agent_id, "Thinking... (Round " + evt.round_index + ")");
   } else if (phase === "agent_message") {
     appendAgentMessage(evt);
+  } else if (phase === "round_cancelled") {
+    skipRoundBtn.classList.add("hidden");
+    cancelDebateBtn.classList.add("hidden");
+    appendLiveEntry("Round " + (evt.round_index || "?") + " cancelled (" + (evt.messages_collected || 0) + " messages collected)", "error");
+  } else if (phase === "cancelled") {
+    skipRoundBtn.classList.add("hidden");
+    cancelDebateBtn.classList.add("hidden");
+    appendLiveEntry("Debate cancelled by user.", "error");
+    setBattleNote("Debate was cancelled.", false);
+    if (currentRunId) {
+      window.setTimeout(function() { openReport(currentRunId); }, 600);
+    }
+    var btn = document.getElementById("start-btn");
+    btn.disabled = false;
+    btn.textContent = "FIGHT!";
   } else if (phase === "round_skipped") {
     skipRoundBtn.classList.add("hidden");
     appendLiveEntry("Round " + (evt.round_index || "?") + " skipped (" + (evt.messages_collected || 0) + " messages collected before skip)", "skipped");
@@ -1928,6 +1960,7 @@ function handleSSEEvent(evt) {
     setBattleNote("Judge is synthesizing the final verdict and usage report...", true);
   } else if (phase === "complete") {
     skipRoundBtn.classList.add("hidden");
+    cancelDebateBtn.classList.add("hidden");
     liveRunData.verdict = evt.verdict || null;
     liveRunData.budget_by_actor = evt.budget_by_actor || {};
     appendLiveEntry("Debate complete!", "verdict");
@@ -1942,6 +1975,7 @@ function handleSSEEvent(evt) {
     btn.textContent = "FIGHT!";
   } else if (phase === "error") {
     skipRoundBtn.classList.add("hidden");
+    cancelDebateBtn.classList.add("hidden");
     appendLiveEntry("Error: " + (evt.message || "Unknown error"), "error");
     setBattleNote("The run ended with an error. Try reducing context size or switching to fewer models.", false);
   } else {

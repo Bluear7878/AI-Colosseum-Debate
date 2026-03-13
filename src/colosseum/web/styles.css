@@ -753,6 +753,28 @@ h1 {
   cursor: not-allowed;
 }
 
+.btn-cancel {
+  padding: 5px 14px;
+  border: 1px solid #e74c3c;
+  border-radius: var(--r);
+  background: transparent;
+  color: #e74c3c;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.btn-cancel:hover {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.btn-cancel:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* ── Plan failed / agent eliminated ── */
 .live-entry.event-plan-failed {
   color: #e87a5a;

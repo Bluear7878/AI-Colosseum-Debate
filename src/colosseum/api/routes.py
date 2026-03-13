@@ -36,6 +36,7 @@ router = APIRouter()
 # Maps run_id → asyncio.Event. The SSE stream registers an event when a
 # debate round starts; the POST /runs/{run_id}/skip-round endpoint sets it.
 _skip_signals: dict[str, asyncio.Event] = {}
+_cancel_signals: dict[str, asyncio.Event] = {}
 
 
 def _register_skip_signal(run_id: str) -> asyncio.Event:
@@ -44,8 +45,18 @@ def _register_skip_signal(run_id: str) -> asyncio.Event:
     return event
 
 
+def _register_cancel_signal(run_id: str) -> asyncio.Event:
+    event = asyncio.Event()
+    _cancel_signals[run_id] = event
+    return event
+
+
 def _cleanup_skip_signal(run_id: str) -> None:
     _skip_signals.pop(run_id, None)
+
+
+def _cleanup_cancel_signal(run_id: str) -> None:
+    _cancel_signals.pop(run_id, None)
 
 
 @router.get("/health")
@@ -256,11 +267,21 @@ async def create_run_stream(
 
             # Phase: debate rounds
             skip_event = _register_skip_signal(run.run_id)
+            cancel_event = _register_cancel_signal(run.run_id)
 
             try:
               while True:
                 # Reset skip event for each round
                 skip_event.clear()
+
+                # Check cancel signal
+                if cancel_event.is_set():
+                    run.status = RunStatus.COMPLETED
+                    run.stop_reason = "cancelled_by_user"
+                    run.updated_at = datetime.now(timezone.utc)
+                    orchestrator.repository.save_run(run)
+                    yield f"data: {json.dumps({'phase': 'cancelled', 'message': 'Debate cancelled by user.'})}\n\n"
+                    return
 
                 decision = await orchestrator.judge_service.decide(run)
                 run.judge_trace.append(decision)
@@ -315,6 +336,7 @@ async def create_run_stream(
                     agenda=decision.agenda,
                     instructions="Focus on the current judge agenda only.",
                     skip_event=skip_event,
+                    cancel_event=cancel_event,
                 ):
                     if isinstance(event_data, dict):
                         bus.emit(event_type, event_data)
@@ -324,6 +346,8 @@ async def create_run_stream(
                         yield f"data: {json.dumps({'phase': 'agent_message', 'agent_id': event_data['agent_id'], 'display_name': event_data['display_name'], 'content': event_data['content'], 'critique_count': event_data['critique_count'], 'defense_count': event_data['defense_count'], 'concession_count': event_data['concession_count'], 'novelty_score': event_data['novelty_score'], 'usage': event_data['usage'], 'round_index': event_data['round_index']})}\n\n"
                     elif event_type == "round_skipped":
                         yield f"data: {json.dumps({'phase': 'round_skipped', 'round_index': event_data['round_index'], 'messages_collected': event_data['messages_collected']})}\n\n"
+                    elif event_type == "round_cancelled":
+                        yield f"data: {json.dumps({'phase': 'round_cancelled', 'round_index': event_data['round_index'], 'messages_collected': event_data['messages_collected']})}\n\n"
                     elif event_type == "round_complete":
                         debate_round = event_data
 
@@ -351,8 +375,18 @@ async def create_run_stream(
 
                 run.updated_at = datetime.now(timezone.utc)
                 orchestrator.repository.save_run(run)
+
+                # Check cancel signal after round completes
+                if cancel_event.is_set():
+                    run.status = RunStatus.COMPLETED
+                    run.stop_reason = "cancelled_by_user"
+                    run.updated_at = datetime.now(timezone.utc)
+                    orchestrator.repository.save_run(run)
+                    yield f"data: {json.dumps({'phase': 'cancelled', 'message': 'Debate cancelled by user.'})}\n\n"
+                    return
             finally:
                 _cleanup_skip_signal(run.run_id)
+                _cleanup_cancel_signal(run.run_id)
 
             # Phase: verdict
             bus.emit("phase", {"phase": "verdict", "message": "Rendering final verdict...", "status": "debating"})
@@ -423,6 +457,20 @@ async def skip_round(run_id: str) -> dict:
         raise HTTPException(status_code=404, detail="No active debate round for this run.")
     event.set()
     return {"skipped": True, "run_id": run_id}
+
+
+@router.post("/runs/{run_id}/cancel")
+async def cancel_debate(run_id: str) -> dict:
+    """Signal the running debate to cancel entirely."""
+    cancel_ev = _cancel_signals.get(run_id)
+    skip_ev = _skip_signals.get(run_id)
+    if not cancel_ev:
+        raise HTTPException(status_code=404, detail="No active debate for this run.")
+    cancel_ev.set()
+    # Also set skip to break out of any in-progress round immediately
+    if skip_ev:
+        skip_ev.set()
+    return {"cancelled": True, "run_id": run_id}
 
 
 @router.get("/provider-quotas", response_model=list[ProviderQuotaState])

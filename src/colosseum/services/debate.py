@@ -134,12 +134,16 @@ class DebateEngine:
         agenda: DebateAgenda | None = None,
         instructions: str | None = None,
         skip_event: asyncio.Event | None = None,
+        cancel_event: asyncio.Event | None = None,
     ):
         """Yields (event_type, data) tuples as agents complete.
 
         If *skip_event* is set while agents are still running, remaining
         tasks are cancelled and the round completes with whatever messages
         have been collected so far.
+
+        If *cancel_event* is set, the round is aborted and a
+        ``round_cancelled`` event is emitted instead of ``round_complete``.
         """
         round_index = len(run.debate_rounds) + 1
         round_timeout = run.budget_policy.timeout_for_round(round_index)
@@ -199,9 +203,17 @@ class DebateEngine:
 
         messages = []
         skipped = False
+        cancelled = False
         pending: set[asyncio.Task] = set(task_to_agent.keys())
 
         while pending:
+            # Check cancel signal before waiting
+            if cancel_event and cancel_event.is_set():
+                for task in pending:
+                    task.cancel()
+                cancelled = True
+                break
+
             # Check skip signal before waiting
             if skip_event and skip_event.is_set():
                 for task in pending:
@@ -209,25 +221,41 @@ class DebateEngine:
                 skipped = True
                 break
 
-            # Wait for next completion or skip signal
+            # Wait for next completion or skip/cancel signal
             wait_tasks: set[asyncio.Task | asyncio.Future] = set(pending)
             skip_waiter: asyncio.Task | None = None
+            cancel_waiter: asyncio.Task | None = None
             if skip_event and not skip_event.is_set():
                 skip_waiter = asyncio.create_task(skip_event.wait())
                 wait_tasks.add(skip_waiter)
+            if cancel_event and not cancel_event.is_set():
+                cancel_waiter = asyncio.create_task(cancel_event.wait())
+                wait_tasks.add(cancel_waiter)
 
             done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
 
-            # Clean up skip waiter if it didn't fire
-            if skip_waiter and skip_waiter not in done:
-                skip_waiter.cancel()
-                try:
-                    await skip_waiter
-                except (asyncio.CancelledError, Exception):
-                    pass
+            # Clean up waiters that didn't fire
+            for waiter in (skip_waiter, cancel_waiter):
+                if waiter and waiter not in done:
+                    waiter.cancel()
+                    try:
+                        await waiter
+                    except (asyncio.CancelledError, Exception):
+                        pass
+
+            # Check if cancel was triggered
+            if cancel_waiter and cancel_waiter in done:
+                done.discard(cancel_waiter)
+                if skip_waiter and skip_waiter in done:
+                    done.discard(skip_waiter)
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                cancelled = True
+                # Fall through to process `done`
 
             # Check if skip was triggered
-            if skip_waiter and skip_waiter in done:
+            elif skip_waiter and skip_waiter in done:
                 done.discard(skip_waiter)
                 for task in pending:
                     if not task.done():
@@ -289,6 +317,10 @@ class DebateEngine:
                     task.result()
                 except Exception:
                     pass
+
+        if cancelled:
+            yield ("round_cancelled", {"round_index": round_index, "messages_collected": len(messages)})
+            return
 
         if skipped:
             yield ("round_skipped", {"round_index": round_index, "messages_collected": len(messages)})
