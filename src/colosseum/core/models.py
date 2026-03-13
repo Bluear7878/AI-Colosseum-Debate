@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, Optional
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, computed_field, field_validator
@@ -321,7 +321,7 @@ class DebateRound(BaseModel):
     round_type: RoundType
     purpose: str
     started_at: datetime = Field(default_factory=utc_now)
-    completed_at: datetime = Field(default_factory=utc_now)
+    completed_at: Optional[datetime] = None
     agenda: DebateAgenda | None = None
     messages: list[AgentMessage] = Field(default_factory=list)
     summary: RoundSummary = Field(default_factory=RoundSummary)

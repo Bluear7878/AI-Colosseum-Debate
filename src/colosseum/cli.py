@@ -32,6 +32,8 @@ from colosseum.core.models import (
     BudgetPolicy,
     ContextSourceInput,
     ContextSourceKind,
+    DebateRound,
+    ExperimentRun,
     JudgeConfig,
     JudgeMode,
     RunCreateRequest,
@@ -1026,9 +1028,11 @@ def cmd_debate(args: argparse.Namespace) -> None:
     profile = DEPTH_PROFILES.get(depth, DEPTH_PROFILES[3])
     depth_label = DEPTH_LABELS.get(depth, "Standard")
 
+    token_budget = profile.get("token_budget", 80000)
+
     if not json_output:
         print(f"  {BOLD}Topic:{RST} {topic}")
-        print(f"  {BOLD}Depth:{RST} {depth} ({depth_label})  {DIM}max {depth} rounds, 80000 token budget{RST}")
+        print(f"  {BOLD}Depth:{RST} {depth} ({depth_label})  {DIM}max {depth} rounds, {token_budget} token budget{RST}")
         print(f"  {BOLD}Gladiators:{RST}")
         for a in agents:
             persona_tag = f" [{a.get('persona_id', '')}]" if a.get("persona_id") else ""
@@ -1064,7 +1068,8 @@ def cmd_debate(args: argparse.Namespace) -> None:
         ),
         budget_policy=BudgetPolicy(
             max_rounds=depth,
-            total_token_budget=80000,
+            min_rounds=profile["min_rounds"],
+            total_token_budget=token_budget,
             per_round_token_limit=12000,
             per_agent_message_limit=1,
             min_novelty_threshold=profile["min_novelty_threshold"],
@@ -1149,7 +1154,7 @@ def cmd_debate(args: argparse.Namespace) -> None:
         sys.exit(1)
 
 
-async def _run_debate_live(orch, request, silent: bool = False) -> object:
+async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun | None:
     """Run the debate with live terminal output and event bus."""
     from colosseum.core.models import (
         ExperimentRun,
@@ -1284,6 +1289,7 @@ async def _run_debate_live(orch, request, silent: bool = False) -> object:
                     elif event_type == "agent_message":
                         _agent_message(event_data)
                 if event_type == "round_complete":
+                    assert isinstance(event_data, DebateRound)
                     debate_round = event_data
                     bus.emit("round_complete", {
                         "round_index": debate_round.index,
@@ -1311,6 +1317,7 @@ async def _run_debate_live(orch, request, silent: bool = False) -> object:
         bus.emit("phase", {"phase": "verdict", "message": "Rendering final verdict...", "status": "debating"})
         last_decision = run.judge_trace[-1] if run.judge_trace else None
         run.verdict = await orch.judge_service.finalize(run, last_decision)
+        run.final_report = await orch.report_synthesizer.synthesize(run)
         run.status = RunStatus.COMPLETED
         run.stop_reason = last_decision.reasoning if last_decision else "judge_finalize"
         run.updated_at = datetime.now(timezone.utc)

@@ -166,7 +166,8 @@ def call_codex(prompt: str, model: str = "") -> str:
     agent logs with the actual response.
     """
     import tempfile
-    out_file = tempfile.mktemp(suffix=".txt", prefix="codex_")
+    fd, out_file = tempfile.mkstemp(suffix=".txt", prefix="codex_")
+    os.close(fd)
     cmd = [
         "codex", "exec",
         "--dangerously-bypass-approvals-and-sandbox",
@@ -188,7 +189,7 @@ def call_codex(prompt: str, model: str = "") -> str:
         pass
     finally:
         try:
-            os.remove(out_file)
+            os.unlink(out_file)
         except OSError:
             pass
 
@@ -257,17 +258,27 @@ def parse_response(raw: str) -> dict:
     # Try extracting from markdown code block
     if "```json" in raw:
         start = raw.index("```json") + 7
-        end = raw.index("```", start)
         try:
-            return json.loads(raw[start:end].strip())
-        except (json.JSONDecodeError, ValueError):
+            end = raw.index("```", start)
+            extracted = raw[start:end].strip()
+        except ValueError:
+            # No closing fence found, use everything after the opening fence
+            extracted = raw[start:].strip()
+        try:
+            return json.loads(extracted)
+        except json.JSONDecodeError:
             pass
     if "```" in raw:
         start = raw.index("```") + 3
-        end = raw.index("```", start)
         try:
-            return json.loads(raw[start:end].strip())
-        except (json.JSONDecodeError, ValueError):
+            end = raw.index("```", start)
+            extracted = raw[start:end].strip()
+        except ValueError:
+            # No closing fence found, use everything after the opening fence
+            extracted = raw[start:].strip()
+        try:
+            return json.loads(extracted)
+        except json.JSONDecodeError:
             pass
     # Return as content string
     return {"content": raw}

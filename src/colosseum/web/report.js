@@ -676,5 +676,8 @@ function submitJudgeAction(runId) {
   });
 }
 
-document.getElementById("judge-action-select").addEventListener("change", syncJudgeForm);
+var judgeSelect = document.getElementById("judge-action-select");
+if (judgeSelect) {
+  judgeSelect.addEventListener("change", syncJudgeForm);
+}
 loadRun();

@@ -8,6 +8,7 @@ from colosseum.core.models import (
     ExperimentRun,
     HumanJudgeActionRequest,
     JudgeActionType,
+    JudgeDecision,
     JudgeMode,
     JudgeVerdict,
     RunListItem,
@@ -375,7 +376,15 @@ class ColosseumOrchestrator:
                 run.budget_ledger,
                 len(run.debate_rounds) + 1,
             ):
-                fallback_decision = await self.judge_service.decide(run)
+                fallback_decision = JudgeDecision(
+                    mode=run.judge.mode,
+                    action=JudgeActionType.FINALIZE,
+                    reasoning="Budget exhausted — maximum rounds or token limit reached.",
+                    confidence=1.0,
+                    disagreement_level=0.0,
+                    expected_value_of_next_round=0.0,
+                    budget_pressure=1.0,
+                )
                 run.judge_trace.append(fallback_decision)
                 run.verdict = await self.judge_service.finalize(run, fallback_decision)
                 run.status = RunStatus.COMPLETED
