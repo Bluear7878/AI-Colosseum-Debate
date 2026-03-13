@@ -133,8 +133,18 @@ class DebateEngine:
         round_type: RoundType,
         agenda: DebateAgenda | None = None,
         instructions: str | None = None,
+        skip_event: asyncio.Event | None = None,
+        cancel_event: asyncio.Event | None = None,
     ):
-        """Yields (event_type, data) tuples as agents complete."""
+        """Yields (event_type, data) tuples as agents complete.
+
+        If *skip_event* is set while agents are still running, remaining
+        tasks are cancelled and the round completes with whatever messages
+        have been collected so far.
+
+        If *cancel_event* is set, the round is aborted and a
+        ``round_cancelled`` event is emitted instead of ``round_complete``.
+        """
         round_index = len(run.debate_rounds) + 1
         round_timeout = run.budget_policy.timeout_for_round(round_index)
         plan_map = {plan.agent_id: plan for plan in run.plans}
@@ -142,9 +152,11 @@ class DebateEngine:
         image_summary = self._image_summary(run)
 
         # Create tasks with agent mapping
-        agent_tasks: dict[int, asyncio.Task] = {}
+        task_to_agent: dict[asyncio.Task, tuple[AgentConfig, object]] = {}
         for agent in run.agents:
-            plan = plan_map[agent.agent_id]
+            plan = plan_map.get(agent.agent_id)
+            if plan is None:
+                continue
             prompt = self._build_prompt(
                 run,
                 agent,
@@ -186,58 +198,132 @@ class DebateEngine:
                 return a, pl, execution.result
 
             task = asyncio.create_task(agent_generate())
-            agent_tasks[id(task)] = task
+            task_to_agent[task] = (agent, plan)
             yield ("agent_thinking", {"agent_id": agent.agent_id, "display_name": agent.display_name, "round_index": round_index})
 
         messages = []
-        pending = list(agent_tasks.values())
-        try:
-            for coro in asyncio.as_completed(pending):
-                agent_result, plan, result = await coro
-                message = self.normalizer.normalize_message(
-                    agent_id=agent_result.agent_id,
-                    plan_id=plan.plan_id,
-                    round_index=round_index,
-                    round_type=round_type,
-                    payload=result.json_payload,
-                    raw_content=result.content,
-                    usage=result.usage,
-                )
-                message.novelty_score = self._novelty_score(
-                    message.content,
-                    [prior.content for prior in messages]
-                    + [prior.content for dr in run.debate_rounds for prior in dr.messages if prior.agent_id == agent_result.agent_id],
-                )
-                message.repetitive = message.novelty_score < run.budget_policy.min_novelty_threshold
-                run.budget_ledger.record(agent_result.agent_id, result.usage, round_index=round_index)
-                messages.append(message)
+        skipped = False
+        cancelled = False
+        pending: set[asyncio.Task] = set(task_to_agent.keys())
 
-                yield ("agent_message", {
-                    "agent_id": agent_result.agent_id,
-                    "display_name": agent_result.display_name,
-                    "content": message.content,
-                    "critique_count": len(message.critique_points),
-                    "defense_count": len(message.defense_points),
-                    "concession_count": len(message.concessions),
-                    "novelty_score": message.novelty_score,
-                    "usage": {
-                        "prompt_tokens": message.usage.prompt_tokens,
-                        "completion_tokens": message.usage.completion_tokens,
-                        "total_tokens": message.usage.total_tokens,
-                    },
-                    "round_index": round_index,
-                })
-        except Exception:
-            for task in pending:
-                if not task.done():
+        while pending:
+            # Check cancel signal before waiting
+            if cancel_event and cancel_event.is_set():
+                for task in pending:
                     task.cancel()
-            for task in pending:
-                if task.done() and not task.cancelled():
+                cancelled = True
+                break
+
+            # Check skip signal before waiting
+            if skip_event and skip_event.is_set():
+                for task in pending:
+                    task.cancel()
+                skipped = True
+                break
+
+            # Wait for next completion or skip/cancel signal
+            wait_tasks: set[asyncio.Task | asyncio.Future] = set(pending)
+            skip_waiter: asyncio.Task | None = None
+            cancel_waiter: asyncio.Task | None = None
+            if skip_event and not skip_event.is_set():
+                skip_waiter = asyncio.create_task(skip_event.wait())
+                wait_tasks.add(skip_waiter)
+            if cancel_event and not cancel_event.is_set():
+                cancel_waiter = asyncio.create_task(cancel_event.wait())
+                wait_tasks.add(cancel_waiter)
+
+            done, _ = await asyncio.wait(wait_tasks, return_when=asyncio.FIRST_COMPLETED)
+
+            # Clean up waiters that didn't fire
+            for waiter in (skip_waiter, cancel_waiter):
+                if waiter and waiter not in done:
+                    waiter.cancel()
                     try:
-                        task.result()
-                    except Exception:
+                        await waiter
+                    except (asyncio.CancelledError, Exception):
                         pass
-            raise
+
+            # Check if cancel was triggered
+            if cancel_waiter and cancel_waiter in done:
+                done.discard(cancel_waiter)
+                if skip_waiter and skip_waiter in done:
+                    done.discard(skip_waiter)
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                cancelled = True
+                # Fall through to process `done`
+
+            # Check if skip was triggered
+            elif skip_waiter and skip_waiter in done:
+                done.discard(skip_waiter)
+                for task in pending:
+                    if not task.done():
+                        task.cancel()
+                skipped = True
+                # Still process any tasks that completed simultaneously
+                # Fall through to process `done`
+
+            for task in done:
+                if task not in task_to_agent:
+                    continue
+                pending.discard(task)
+                agent_result_cfg, plan_obj = task_to_agent[task]
+                try:
+                    agent_result, plan, result = task.result()
+                    message = self.normalizer.normalize_message(
+                        agent_id=agent_result.agent_id,
+                        plan_id=plan.plan_id,
+                        round_index=round_index,
+                        round_type=round_type,
+                        payload=result.json_payload,
+                        raw_content=result.content,
+                        usage=result.usage,
+                    )
+                    message.novelty_score = self._novelty_score(
+                        message.content,
+                        [prior.content for prior in messages]
+                        + [prior.content for dr in run.debate_rounds for prior in dr.messages if prior.agent_id == agent_result.agent_id],
+                    )
+                    message.repetitive = message.novelty_score < run.budget_policy.min_novelty_threshold
+                    run.budget_ledger.record(agent_result.agent_id, result.usage, round_index=round_index)
+                    messages.append(message)
+
+                    yield ("agent_message", {
+                        "agent_id": agent_result.agent_id,
+                        "display_name": agent_result.display_name,
+                        "content": message.content,
+                        "critique_count": len(message.critique_points),
+                        "defense_count": len(message.defense_points),
+                        "concession_count": len(message.concessions),
+                        "novelty_score": message.novelty_score,
+                        "usage": {
+                            "prompt_tokens": message.usage.prompt_tokens,
+                            "completion_tokens": message.usage.completion_tokens,
+                            "total_tokens": message.usage.total_tokens,
+                        },
+                        "round_index": round_index,
+                    })
+                except (asyncio.CancelledError, Exception):
+                    pass  # Agent was cancelled or failed — skip it
+
+            if skipped:
+                break
+
+        # Suppress cancelled-task warnings
+        for task in task_to_agent:
+            if task.done() and not task.cancelled():
+                try:
+                    task.result()
+                except Exception:
+                    pass
+
+        if cancelled:
+            yield ("round_cancelled", {"round_index": round_index, "messages_collected": len(messages)})
+            return
+
+        if skipped:
+            yield ("round_skipped", {"round_index": round_index, "messages_collected": len(messages)})
 
         summary = self._summarize_round(messages, round_type)
         usage = self._aggregate_usage(messages)

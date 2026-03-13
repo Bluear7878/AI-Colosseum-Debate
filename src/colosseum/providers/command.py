@@ -35,7 +35,7 @@ class CommandProvider(BaseProvider):
         model_name: str,
         command: list[str],
         env: dict[str, str] | None = None,
-        timeout_seconds: int = 180,
+        timeout_seconds: int | None = 180,
     ) -> None:
         self.model_name = model_name
         self.command = command
@@ -71,6 +71,12 @@ class CommandProvider(BaseProvider):
         process_env = os.environ.copy()
         process_env.update(self.env)
         process_env["COLOSSEUM_INPUT_PATH"] = str(input_path)
+        # Pass timeout to cli_wrapper so inner subprocess.run respects it.
+        # "0" means no limit; otherwise pass the seconds as a string.
+        if self.timeout_seconds is None:
+            process_env["COLOSSEUM_TIMEOUT"] = "0"
+        else:
+            process_env["COLOSSEUM_TIMEOUT"] = str(self.timeout_seconds)
 
         try:
             process = await asyncio.create_subprocess_exec(
