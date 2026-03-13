@@ -119,10 +119,15 @@
       <div class="control-group">
         <label class="label">Judge</label>
         <div class="judge-toggle">
-          <button id="judge-auto" class="judge-btn active" data-judge="automated" title="AI evaluates plans and renders the final verdict automatically">AI Judge</button>
+          <button id="judge-auto" class="judge-btn active" data-judge="automated" title="Colosseum's built-in judge uses heuristics, budget controls, and evidence checks">Auto Judge</button>
+          <button id="judge-ai" class="judge-btn" data-judge="ai" title="A model you choose will act as the judge and render the verdict">AI Judge</button>
           <button id="judge-human" class="judge-btn" data-judge="human" title="You review each round and decide when to stop, continue, or finalize">Human Judge</button>
         </div>
-        <p id="judge-note" class="judge-note">AI will evaluate plans and render the verdict.</p>
+        <div id="judge-model-wrap" class="judge-model-wrap hidden">
+          <label class="label" for="judge-model">Judge Model</label>
+          <select id="judge-model" class="arena-input-sm"></select>
+        </div>
+        <p id="judge-note" class="judge-note">Colosseum's built-in judge will evaluate plans and render the verdict.</p>
       </div>
       <div class="control-group">
         <label class="label">Mode</label>

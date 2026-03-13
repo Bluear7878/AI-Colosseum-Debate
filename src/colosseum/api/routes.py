@@ -129,6 +129,10 @@ async def create_run_stream(
     logger.info("POST /runs/stream — agents=%s, task=%r", [a.agent_id for a in request.agents], request.task.title)
     try:
         orchestrator.provider_runtime.validate_agents_selectable(request.agents)
+        if request.judge.mode == JudgeMode.AI:
+            if not request.judge.provider:
+                raise ValueError("AI judge mode requires a judge provider.")
+            orchestrator.provider_runtime.validate_provider_selectable(request.judge.provider, "AI judge")
     except Exception as exc:
         logger.error("POST /runs/stream — validation failed\n%s", traceback.format_exc())
         raise HTTPException(status_code=400, detail=str(exc)) from exc

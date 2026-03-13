@@ -100,7 +100,8 @@ var MAX_TEXT_FILE_BYTES = 100000;
 var MAX_IMAGE_FILE_BYTES = 4 * 1024 * 1024;
 var currentRunId = null;
 var currentMode = "live"; // "live" or "result"
-var currentJudgeMode = "automated"; // "automated" or "human"
+var currentJudgeMode = "automated"; // "automated", "ai", or "human"
+var judgeModelIndex = {};
 
 function loadCustomModels() {
   try {
@@ -543,6 +544,7 @@ function renderGladiatorGrid() {
     freeGrid.appendChild(createCustomCard(m));
   });
   grid.appendChild(freeGrid);
+  renderJudgeModelOptions();
 }
 
 function createGladiatorCard(g) {
@@ -874,27 +876,73 @@ modeResult.addEventListener("click", function() {
 
 /* ── Judge toggle ── */
 var judgeAuto = document.getElementById("judge-auto");
+var judgeAi = document.getElementById("judge-ai");
 var judgeHuman = document.getElementById("judge-human");
+var judgeModelWrap = document.getElementById("judge-model-wrap");
+var judgeModelSelect = document.getElementById("judge-model");
 var judgeNote = document.getElementById("judge-note");
 
 var JUDGE_NOTES = {
-  automated: "AI will evaluate plans and render the verdict.",
+  automated: "Colosseum's built-in judge balances evidence quality, disagreement, and budget pressure.",
+  ai: "Choose a model to act as the judge for each round and the final verdict.",
   human: "You will review each round and decide the outcome yourself."
 };
 
+function updateJudgeControls() {
+  if (judgeAuto) {
+    if (currentJudgeMode === "automated") judgeAuto.classList.add("active");
+    else judgeAuto.classList.remove("active");
+  }
+  if (judgeAi) {
+    if (currentJudgeMode === "ai") judgeAi.classList.add("active");
+    else judgeAi.classList.remove("active");
+  }
+  if (judgeHuman) {
+    if (currentJudgeMode === "human") judgeHuman.classList.add("active");
+    else judgeHuman.classList.remove("active");
+  }
+  if (judgeModelWrap) {
+    if (currentJudgeMode === "ai") judgeModelWrap.classList.remove("hidden");
+    else judgeModelWrap.classList.add("hidden");
+  }
+  if (!judgeNote) return;
+  if (currentJudgeMode !== "ai") {
+    judgeNote.textContent = JUDGE_NOTES[currentJudgeMode] || JUDGE_NOTES.automated;
+    return;
+  }
+  var option = getSelectedJudgeModelOption();
+  if (!option) {
+    judgeNote.textContent = "Pick a judge model before starting the run.";
+    return;
+  }
+  if (option.blocked) {
+    judgeNote.textContent = option.label + " is unavailable because its tracked quota is exhausted.";
+    return;
+  }
+  judgeNote.textContent = option.label + " will review each round, set the next agenda, and deliver the final verdict.";
+}
+
 judgeAuto.addEventListener("click", function() {
   currentJudgeMode = "automated";
-  judgeAuto.classList.add("active");
-  judgeHuman.classList.remove("active");
-  judgeNote.textContent = JUDGE_NOTES.automated;
+  updateJudgeControls();
+});
+
+judgeAi.addEventListener("click", function() {
+  currentJudgeMode = "ai";
+  updateJudgeControls();
 });
 
 judgeHuman.addEventListener("click", function() {
   currentJudgeMode = "human";
-  judgeHuman.classList.add("active");
-  judgeAuto.classList.remove("active");
-  judgeNote.textContent = JUDGE_NOTES.human;
+  updateJudgeControls();
 });
+
+if (judgeModelSelect) {
+  judgeModelSelect.addEventListener("change", updateJudgeControls);
+}
+
+renderJudgeModelOptions();
+updateJudgeControls();
 
 /* ── File attachments ── */
 var fileDrop = document.getElementById("file-drop");
@@ -1272,6 +1320,108 @@ function findVariantByModel(modelId) {
   return found;
 }
 
+function judgeModelOptions() {
+  var options = [];
+  GLADIATORS.forEach(function(g) {
+    (g.variants || []).forEach(function(v, idx) {
+      options.push({
+        value: "builtin:" + g.id + ":" + idx,
+        label: g.name + " — " + v.label + (g.tier === "paid" ? " · paid" : " · free"),
+        tier: g.tier,
+        entry: g,
+        variant: v,
+        blocked: isGladiatorQuotaBlocked(g),
+        custom: false
+      });
+    });
+  });
+  customModels.forEach(function(model) {
+    options.push({
+      value: "custom:" + model.id,
+      label: model.name + (model.tier === "paid" ? " · paid" : " · free"),
+      tier: model.tier,
+      entry: model,
+      blocked: isGladiatorQuotaBlocked(model),
+      custom: true,
+      model: model
+    });
+  });
+  return options;
+}
+
+function defaultJudgeModelValue(options) {
+  var firstPaid = "";
+  var firstAvailable = "";
+  (options || []).forEach(function(option) {
+    if (option.blocked) return;
+    if (!firstAvailable) firstAvailable = option.value;
+    if (!firstPaid && option.tier === "paid") firstPaid = option.value;
+  });
+  return firstPaid || firstAvailable || ((options && options[0]) ? options[0].value : "");
+}
+
+function getSelectedJudgeModelOption() {
+  if (!judgeModelSelect) return null;
+  return judgeModelIndex[judgeModelSelect.value] || null;
+}
+
+function renderJudgeModelOptions() {
+  if (!judgeModelSelect) return;
+  var options = judgeModelOptions();
+  var previous = judgeModelSelect.value;
+  judgeModelIndex = {};
+  judgeModelSelect.innerHTML = "";
+  if (!options.length) {
+    judgeModelSelect.innerHTML = '<option value="">No models available</option>';
+    judgeModelSelect.disabled = true;
+    updateJudgeControls();
+    return;
+  }
+  options.forEach(function(option) {
+    judgeModelIndex[option.value] = option;
+    var opt = document.createElement("option");
+    opt.value = option.value;
+    opt.textContent = option.label + (option.blocked ? " — unavailable" : "");
+    opt.disabled = !!option.blocked;
+    judgeModelSelect.appendChild(opt);
+  });
+  judgeModelSelect.disabled = false;
+  var nextValue = previous && judgeModelIndex[previous] && !judgeModelIndex[previous].blocked
+    ? previous
+    : defaultJudgeModelValue(options);
+  if (nextValue) judgeModelSelect.value = nextValue;
+  updateJudgeControls();
+}
+
+function buildJudgeProviderPayload() {
+  var option = getSelectedJudgeModelOption();
+  if (!option) return null;
+  return option.custom
+    ? buildProviderPayloadFromCustomModel(option.model)
+    : buildProviderPayloadFromVariant(option.entry.id, option.variant, option.entry.tier);
+}
+
+function validateJudgeSelection() {
+  if (currentJudgeMode !== "ai") return true;
+  var option = getSelectedJudgeModelOption();
+  if (!option) {
+    toast("Choose a model for the AI judge.");
+    return false;
+  }
+  if (option.blocked) {
+    toast(option.label + " cannot judge right now because its tracked quota is exhausted.");
+    return false;
+  }
+  if (option.tier === "paid" && document.getElementById("paid-depletion-action").value === "wait_for_reset") {
+    var state = quotaStateForEntry(option.entry);
+    if (isTrackedQuotaState(state) && !state.reset_at) {
+      toast("Set a reset time before using wait mode with the selected AI judge.");
+      return false;
+    }
+  }
+  return true;
+}
+
 function buildPaidProviderPolicy() {
   var action = document.getElementById("paid-depletion-action").value;
   var fallbackModel = document.getElementById("free-fallback-model").value || DEFAULT_FALLBACK_MODEL;
@@ -1411,6 +1561,8 @@ function buildPayload() {
     return source;
   }));
 
+  var judgeProvider = currentJudgeMode === "ai" ? buildJudgeProviderPayload() : null;
+
   return {
     project_name: "Colosseum",
     task: {
@@ -1422,6 +1574,7 @@ function buildPayload() {
     agents: agents,
     judge: {
       mode: currentJudgeMode,
+      provider: judgeProvider || undefined,
       minimum_confidence_to_stop: (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).confidence,
       prefer_merged_plan_on_close_scores: true
     },
@@ -1710,6 +1863,7 @@ document.getElementById("start-btn").addEventListener("click", function() {
   var selectedCount = Object.keys(selectedGladiators).length;
   if (selectedCount < 2) return toast("Choose at least 2 gladiators.");
   if (!validatePaidSelection()) return;
+  if (!validateJudgeSelection()) return;
 
   var payload = buildPayload();
   var btn = document.getElementById("start-btn");

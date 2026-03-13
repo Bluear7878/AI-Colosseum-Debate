@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from colosseum.api.routes import create_run_stream, get_run
 from colosseum.core.models import (
     AgentConfig,
+    BillingTier,
     BudgetLedger,
     ContextSourceInput,
     ContextSourceKind,
@@ -21,6 +22,7 @@ from colosseum.core.models import (
     JudgeMode,
     PlanDocument,
     ProviderConfig,
+    ProviderQuotaState,
     ProviderType,
     RunCreateRequest,
     TaskSpec,
@@ -548,3 +550,48 @@ def test_api_human_judge_merge_plans(tmp_path):
     assert updated.status.value == "completed"
     assert updated.verdict is not None
     assert updated.verdict.verdict_type.value == "merged"
+
+
+def test_api_sse_rejects_exhausted_ai_judge(tmp_path):
+    orchestrator = build_orchestrator(tmp_path)
+    orchestrator.provider_runtime.upsert_quota_states([
+        ProviderQuotaState(
+            quota_key="paid:openai",
+            label="OpenAI",
+            billing_tier=BillingTier.PAID,
+            cycle_token_limit=500,
+            remaining_tokens=0,
+        )
+    ])
+
+    request = RunCreateRequest(
+        project_name="SSE Judge",
+        task=TaskSpec(title="SSE Judge", problem_statement="test"),
+        context_sources=[
+            ContextSourceInput(
+                source_id="t",
+                kind=ContextSourceKind.INLINE_TEXT,
+                label="t",
+                content="x",
+            )
+        ],
+        agents=[
+            AgentConfig(agent_id="a", display_name="A", provider=ProviderConfig(type=ProviderType.MOCK, model="a")),
+            AgentConfig(agent_id="b", display_name="B", provider=ProviderConfig(type=ProviderType.MOCK, model="b")),
+        ],
+        judge=JudgeConfig(
+            mode=JudgeMode.AI,
+            provider=ProviderConfig(
+                type=ProviderType.CODEX_CLI,
+                model="gpt-5.4",
+                billing_tier=BillingTier.PAID,
+                quota_key="paid:openai",
+            ),
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        asyncio.run(create_run_stream(request, orchestrator=orchestrator))
+
+    assert exc.value.status_code == 400
+    assert "AI judge" in str(exc.value.detail)
