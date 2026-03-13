@@ -83,6 +83,7 @@ The UI supports:
 - paid quota tracking
 - custom model registration
 - image attachment uploads for shared VLM context
+- AI judge model selection from the setup screen using any available built-in or custom model
 - human judge actions from the report screen when a run is paused for review
 
 ### CLI
@@ -196,7 +197,7 @@ Each round is bounded. Later rounds use summary memory instead of replaying full
 ### Judge modes
 
 - `automated`: heuristic judge with budget, novelty, convergence, and evidence checks
-- `ai`: provider-backed judge using the same provider abstraction
+- `ai`: provider-backed judge using the same provider abstraction; the web UI lets you choose the exact judge model separately from the debating agents
 - `human`: pause after planning or after requested rounds and wait for explicit human action from the battle report screen
 
 The final verdict can be:

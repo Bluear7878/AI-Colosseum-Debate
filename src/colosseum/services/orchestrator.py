@@ -46,6 +46,10 @@ class ColosseumOrchestrator:
 
     async def create_run(self, request: RunCreateRequest) -> ExperimentRun:
         self.provider_runtime.validate_agents_selectable(request.agents)
+        if request.judge.mode == JudgeMode.AI:
+            if not request.judge.provider:
+                raise ValueError("AI judge mode requires a judge provider.")
+            self.provider_runtime.validate_provider_selectable(request.judge.provider, "AI judge")
         run = ExperimentRun(
             project_name=request.project_name,
             task=request.task,

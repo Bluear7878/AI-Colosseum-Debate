@@ -74,6 +74,11 @@ class ProviderRuntimeService:
         if blocked:
             raise ValueError("Paid quota exhausted. " + " ".join(blocked))
 
+    def validate_provider_selectable(self, provider: ProviderConfig, label: str = "Provider") -> None:
+        reason = self.selection_block_reason(provider)
+        if reason:
+            raise ValueError(f"{label} is not selectable because {reason}")
+
     def selection_block_reason(self, provider: ProviderConfig) -> str | None:
         if not self.is_paid_provider(provider):
             return None
