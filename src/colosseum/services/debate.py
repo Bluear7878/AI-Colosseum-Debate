@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from difflib import SequenceMatcher
 from statistics import mean
+
+logger = logging.getLogger(__name__)
 
 from colosseum.core.config import (
     build_evidence_policy,
@@ -18,6 +21,7 @@ from colosseum.core.models import (
     RoundSummary,
     RoundType,
     UsageMetrics,
+    utc_now,
 )
 from colosseum.services.budget import BudgetManager
 from colosseum.services.normalizers import ResponseNormalizer
@@ -127,6 +131,7 @@ class DebateEngine:
             messages=messages,
             summary=summary,
             usage=usage,
+            completed_at=utc_now(),
         )
 
     async def run_round_streaming(
@@ -308,8 +313,10 @@ class DebateEngine:
                         },
                         "round_index": round_index,
                     })
-                except (asyncio.CancelledError, Exception):
-                    pass  # Agent was cancelled or failed — skip it
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.exception("Agent %s failed in round %d: %s", agent_result_cfg.agent_id, round_index, e)
 
             if skipped:
                 break
@@ -339,6 +346,7 @@ class DebateEngine:
             messages=messages,
             summary=summary,
             usage=usage,
+            completed_at=utc_now(),
         )
         yield ("round_complete", debate_round)
 

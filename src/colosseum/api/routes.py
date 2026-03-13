@@ -6,13 +6,16 @@ import logging
 import traceback
 from datetime import datetime, timezone
 
+
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 from fastapi.responses import Response, StreamingResponse
 
 from colosseum.bootstrap import get_orchestrator
 
 logger = logging.getLogger("colosseum.api")
 from colosseum.core.models import (
+    DebateRound,
     ExperimentRun,
     GeneratedPersona,
     HumanJudgeActionRequest,
@@ -69,7 +72,7 @@ async def setup_status() -> list[dict]:
     """Return install/auth status of all CLI provider tools."""
     import asyncio
     from colosseum.cli import get_all_tool_statuses
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     return await loop.run_in_executor(None, get_all_tool_statuses)
 
 
@@ -77,7 +80,7 @@ async def setup_status() -> list[dict]:
 async def list_models() -> list[dict]:
     """Return dynamically discovered model list from installed CLIs."""
     from colosseum.cli import discover_models
-    return discover_models()
+    return await asyncio.to_thread(discover_models)
 
 
 @router.get("/cli-versions")
@@ -92,7 +95,7 @@ async def refresh_models() -> list[dict]:
     """Force re-probe all provider models."""
     import asyncio
     from colosseum.cli import probe_all_models
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     models = await loop.run_in_executor(None, probe_all_models)
     return models
 
@@ -172,9 +175,12 @@ async def create_run(
         result = await orchestrator.create_run(request)
         logger.info("POST /runs — completed run_id=%s status=%s", result.run_id, result.status)
         return result
-    except Exception as exc:  # pragma: no cover - API guard
-        logger.error("POST /runs — FAILED\n%s", traceback.format_exc())
+    except (ValueError, TypeError, ValidationError) as exc:  # pragma: no cover - API guard
+        logger.error("POST /runs — FAILED (client error)\n%s", traceback.format_exc())
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # pragma: no cover - API guard
+        logger.error("POST /runs — FAILED (server error)\n%s", traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @router.post("/runs/stream")
@@ -225,7 +231,7 @@ async def create_run_stream(
             # Phase: context
             yield f"data: {json.dumps({'phase': 'context', 'message': 'Freezing context...'})}\n\n"
             bus.emit("phase", {"phase": "context", "message": "Freezing context...", "status": "planning"})
-            run.context_bundle = orchestrator.context_service.freeze(request.context_sources)
+            run.context_bundle = await asyncio.to_thread(orchestrator.context_service.freeze, request.context_sources)
             orchestrator.repository.save_run(run)
 
             # Phase: planning - stream per-agent
@@ -250,6 +256,9 @@ async def create_run_stream(
 
             # ── Single-agent auto-win ──
             if len(run.agents) == 1:
+                if not run.plans:
+                    yield f"data: {json.dumps({'phase': 'error', 'message': 'Single agent produced no plan; cannot auto-win.'})}\n\n"
+                    return
                 sole_plan = run.plans[0]
                 run.verdict = JudgeVerdict(
                     judge_mode=run.judge.mode,
@@ -356,7 +365,7 @@ async def create_run_stream(
                 yield f"data: {json.dumps({'phase': 'debate_round', 'round_index': round_idx, 'round_type': round_type.value, 'message': f'Round {round_idx}: {round_type.value}...', 'agenda_title': decision.agenda.title if decision.agenda else '', 'agenda_question': decision.agenda.question if decision.agenda else '', 'timeout_seconds': round_timeout or None})}\n\n"
 
                 run.status = RunStatus.DEBATING
-                debate_round = None
+                debate_round: DebateRound | None = None
                 async for event_type, event_data in orchestrator.debate_engine.run_round_streaming(
                     run,
                     round_type=round_type,
@@ -376,6 +385,7 @@ async def create_run_stream(
                     elif event_type == "round_cancelled":
                         yield f"data: {json.dumps({'phase': 'round_cancelled', 'round_index': event_data['round_index'], 'messages_collected': event_data['messages_collected']})}\n\n"
                     elif event_type == "round_complete":
+                        assert isinstance(event_data, DebateRound)
                         debate_round = event_data
 
                 if debate_round is not None:

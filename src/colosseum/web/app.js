@@ -311,8 +311,8 @@ function esc(v) {
     .replace(/"/g, "&quot;");
 }
 function fmt(v) { return typeof v === "number" ? v.toFixed(2) : "-"; }
-function show(id) { document.getElementById(id).classList.remove("hidden"); }
-function hide(id) { document.getElementById(id).classList.add("hidden"); }
+function show(id) { var el = document.getElementById(id); if (!el) return; el.classList.remove("hidden"); }
+function hide(id) { var el = document.getElementById(id); if (!el) return; el.classList.add("hidden"); }
 function reportUrl(runId) { return "/reports/" + encodeURIComponent(runId); }
 function openReport(runId) {
   if (!runId) return;
@@ -947,9 +947,12 @@ skipRoundBtn.addEventListener("click", function() {
   if (!currentRunId) return;
   skipRoundBtn.disabled = true;
   skipRoundBtn.textContent = "Skipping...";
-  fetch("/api/runs/" + currentRunId + "/skip-round", { method: "POST" })
+  fetch("/runs/" + encodeURIComponent(currentRunId) + "/skip-round", { method: "POST" })
     .then(function(res) { return res.json(); })
-    .catch(function() {})
+    .catch(function(err) {
+      console.error("Skip round failed:", err);
+      toast("Skip round failed.");
+    })
     .finally(function() {
       skipRoundBtn.disabled = false;
       skipRoundBtn.textContent = "Skip Round";
@@ -963,9 +966,12 @@ cancelDebateBtn.addEventListener("click", function() {
   if (!confirm("Cancel the entire debate? This will stop all rounds immediately.")) return;
   cancelDebateBtn.disabled = true;
   cancelDebateBtn.textContent = "Cancelling...";
-  fetch("/api/runs/" + currentRunId + "/cancel", { method: "POST" })
+  fetch("/runs/" + encodeURIComponent(currentRunId) + "/cancel", { method: "POST" })
     .then(function(res) { return res.json(); })
-    .catch(function() {})
+    .catch(function(err) {
+      console.error("Cancel debate failed:", err);
+      toast("Cancel debate failed.");
+    })
     .finally(function() {
       cancelDebateBtn.disabled = false;
       cancelDebateBtn.textContent = "Cancel Debate";
@@ -2478,7 +2484,7 @@ function renderVerdict(run) {
 
   var typeClass = v.verdict_type === "merged" ? "merged" : "winner";
   var html = '<span class="verdict-type ' + typeClass + '">' +
-    esc(v.verdict_type.toUpperCase()) + ': ' + esc(winnerNames.join(" & ")) + '</span>';
+    esc(v.verdict_type ? v.verdict_type.toUpperCase() : 'UNKNOWN') + ': ' + esc(winnerNames.join(" & ")) + '</span>';
 
   html += '<div class="verdict-rationale">' + esc(v.rationale) + '</div>';
   html += '<div class="verdict-details">';

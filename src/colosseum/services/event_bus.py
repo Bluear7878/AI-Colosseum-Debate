@@ -20,7 +20,8 @@ class DebateEventBus:
         self.root = root or ARTIFACT_ROOT
         self._event_path = self.root / run_id / "events.jsonl"
         self._event_path.parent.mkdir(parents=True, exist_ok=True)
-        self._event_path.write_text("", encoding="utf-8")
+        if not self._event_path.exists():
+            self._event_path.write_text("", encoding="utf-8")
 
     def emit(self, event_type: str, data: dict[str, Any] | None = None) -> None:
         event = {

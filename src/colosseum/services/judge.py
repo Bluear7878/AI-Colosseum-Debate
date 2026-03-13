@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from statistics import mean
+from typing import Any
 
 from colosseum.core.config import (
     build_evidence_policy,
@@ -21,6 +22,7 @@ from colosseum.core.models import (
     PlanDocument,
     PlanEvaluation,
     PlanSummaryCard,
+    RiskItem,
     RoundAdjudication,
     RoundType,
     VerdictType,
@@ -309,6 +311,7 @@ class JudgeService:
         )
 
     async def _ai_decide(self, run: ExperimentRun) -> JudgeDecision:
+        assert run.judge.provider is not None  # caller guarantees this
         suggested_round = self._next_round_type(run)
         suggested_agenda = self._select_agenda(run, suggested_round)
         image_inputs = self._image_inputs(run)
@@ -399,18 +402,36 @@ class JudgeService:
             if second_plan
             else 0.0
         )
-        # Always declare a single winner — the report synthesizer handles comprehensive summary.
         margin = round(top_score - (second_score if second_plan else 0.0), 3)
-        if margin < 0.05 and second_plan:
+        if (
+            margin < 0.05
+            and second_plan
+            and run.judge.prefer_merged_plan_on_close_scores
+        ):
+            # Close scores with merge preference → merged verdict
+            combined_strengths: list[str] = []
+            seen: set[str] = set()
+            for strength in top_plan.strengths + second_plan.strengths:
+                if strength not in seen:
+                    seen.add(strength)
+                    combined_strengths.append(strength)
             rationale = (
-                f"{top_plan.display_name} edges out the competition by a narrow margin "
-                f"(score gap: {margin:.3f}). "
-                f"The final report captures the strongest ideas from all participants."
+                f"Scores are too close to declare a clear winner (gap: {margin:.3f}). "
+                f"The best elements of both plans have been merged."
             )
-        else:
-            rationale = (
-                f"{top_plan.display_name} produced the strongest evidence-backed plan for this task."
+            return JudgeVerdict(
+                judge_mode=run.judge.mode,
+                verdict_type=VerdictType.MERGED,
+                winning_plan_ids=[top_plan.plan_id, second_plan.plan_id],
+                rationale=rationale,
+                selected_strengths=combined_strengths[:6],
+                rejected_risks=[risk.title for risk in top_plan.risks[:3]],
+                stop_reason=decision.reasoning if decision else "judge_finalize",
+                confidence=max(0.70, top_score),
             )
+        rationale = (
+            f"{top_plan.display_name} produced the strongest evidence-backed plan for this task."
+        )
         return JudgeVerdict(
             judge_mode=run.judge.mode,
             verdict_type=VerdictType.WINNER,
@@ -450,6 +471,8 @@ class JudgeService:
             "rejected_risks (list[str], risks that were mitigated or rejected)."
             + (f"\n\nREMINDER: Write in {lang}." if lang else "")
         )
+        if run.judge.provider is None:
+            return None
         execution = await self.provider_runtime.execute(
             run=run,
             actor_id="judge:finalize",
@@ -489,28 +512,34 @@ class JudgeService:
             confidence=decision.confidence if decision else 0.75,
         )
 
-    def _payload_to_plan(self, payload: dict[str, object], run: ExperimentRun) -> PlanDocument:
+    def _payload_to_plan(self, payload: dict[str, Any], run: ExperimentRun) -> PlanDocument:
+        def _strlist(key: str) -> list[str]:
+            val = payload.get(key, [])
+            return [str(item) for item in val] if isinstance(val, list) else []
+
+        risks_raw = payload.get("risks", [])
+        risks: list[RiskItem] = [
+            RiskItem(
+                title=str(risk.get("title", "Unspecified risk")),
+                severity=risk.get("severity", "medium"),
+                mitigation=str(risk.get("mitigation", "Clarify mitigation.")),
+            )
+            for risk in risks_raw
+            if isinstance(risks_raw, list) and isinstance(risk, dict)
+        ]
         return PlanDocument(
             agent_id="judge:synthesis",
             display_name="Judge synthesis",
             summary=str(payload.get("summary", "Synthesized final plan")),
-            evidence_basis=[str(item) for item in payload.get("evidence_basis", [])],
-            assumptions=[str(item) for item in payload.get("assumptions", [])],
-            architecture=[str(item) for item in payload.get("architecture", [])],
-            implementation_strategy=[str(item) for item in payload.get("implementation_strategy", [])],
-            risks=[
-                {
-                    "title": risk.get("title", "Unspecified risk"),
-                    "severity": risk.get("severity", "medium"),
-                    "mitigation": risk.get("mitigation", "Clarify mitigation."),
-                }
-                for risk in payload.get("risks", [])
-                if isinstance(risk, dict)
-            ],
-            strengths=[str(item) for item in payload.get("strengths", [])],
-            weaknesses=[str(item) for item in payload.get("weaknesses", [])],
-            trade_offs=[str(item) for item in payload.get("trade_offs", [])],
-            open_questions=[str(item) for item in payload.get("open_questions", [])],
+            evidence_basis=_strlist("evidence_basis"),
+            assumptions=_strlist("assumptions"),
+            architecture=_strlist("architecture"),
+            implementation_strategy=_strlist("implementation_strategy"),
+            risks=risks,
+            strengths=_strlist("strengths"),
+            weaknesses=_strlist("weaknesses"),
+            trade_offs=_strlist("trade_offs"),
+            open_questions=_strlist("open_questions"),
             raw_response=str(payload),
         )
 
