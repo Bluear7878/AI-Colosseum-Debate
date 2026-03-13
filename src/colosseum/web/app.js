@@ -1622,9 +1622,12 @@ function buildPayload() {
 
   var judgeProvider = currentJudgeMode === "ai" ? buildJudgeProviderPayload() : null;
 
+  var responseLang = document.getElementById("response-language").value;
+
   return {
     project_name: "Colosseum",
     encourage_internet_search: encourageInternetSearch,
+    response_language: responseLang,
     task: {
       title: topic.length > 120 ? topic.slice(0, 120) : topic,
       problem_statement: topic + (codebaseUrl ? "\n\nCodebase: " + codebaseUrl : ""),

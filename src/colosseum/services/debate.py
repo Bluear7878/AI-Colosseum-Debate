@@ -317,6 +317,8 @@ class DebateEngine:
             )
         if instructions:
             prompt_parts.append(f"Additional judge instructions: {instructions}")
+        if run.response_language and run.response_language != "auto":
+            prompt_parts.append(f"IMPORTANT: You MUST write your entire response in {run.response_language}. All arguments, rebuttals, and analysis must be in {run.response_language}.")
         if agent.persona_content:
             prompt_parts.insert(0, "=== YOUR PERSONA ===\n" + agent.persona_content + "\n=== END PERSONA ===")
         elif agent.system_prompt:

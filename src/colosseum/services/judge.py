@@ -285,13 +285,16 @@ class JudgeService:
         suggested_round = self._next_round_type(run)
         suggested_agenda = self._select_agenda(run, suggested_round)
         image_inputs = self._image_inputs(run)
+        judge_instructions = "Decide whether Colosseum should continue the debate or finalize."
+        if run.response_language and run.response_language != "auto":
+            judge_instructions += f" Write your reasoning in {run.response_language}."
         execution = await self.provider_runtime.execute(
             run=run,
             actor_id="judge:decision",
             actor_label="AI Judge",
             provider_config=run.judge.provider,
             operation="judge",
-            instructions="Decide whether Colosseum should continue the debate or finalize.",
+            instructions=judge_instructions,
             metadata={
                 "suggested_action": "continue_debate",
                 "next_round_type": suggested_round.value if suggested_round else "rebuttal",
@@ -383,13 +386,16 @@ class JudgeService:
         decision: JudgeDecision | None,
     ) -> JudgeVerdict | None:
         image_inputs = self._image_inputs(run)
+        synthesis_instructions = "Produce the final judge verdict and synthesized plan for the run."
+        if run.response_language and run.response_language != "auto":
+            synthesis_instructions += f" Write all content in {run.response_language}."
         execution = await self.provider_runtime.execute(
             run=run,
             actor_id="judge:synthesis",
             actor_label="AI Judge",
             provider_config=run.judge.provider,
             operation="synthesis",
-            instructions="Produce the final judge verdict and synthesized plan for the run.",
+            instructions=synthesis_instructions,
             metadata={
                 "run_id": run.run_id,
                 "basis_plan_ids": [plan.plan_id for plan in run.plans[:2]],

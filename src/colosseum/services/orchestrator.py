@@ -53,6 +53,7 @@ class ColosseumOrchestrator:
         run = ExperimentRun(
             project_name=request.project_name,
             encourage_internet_search=request.encourage_internet_search,
+            response_language=request.response_language,
             task=request.task,
             agents=request.agents,
             judge=request.judge,
@@ -407,6 +408,8 @@ class ColosseumOrchestrator:
                 ]
             )
         parts.append(context_text)
+        if run.response_language and run.response_language != "auto":
+            parts.append(f"IMPORTANT: You MUST write your entire response in {run.response_language}. All sections, analysis, and explanations must be in {run.response_language}.")
         if agent.persona_content:
             parts.insert(0, "=== YOUR PERSONA ===\n" + agent.persona_content + "\n=== END PERSONA ===")
         elif agent.system_prompt:

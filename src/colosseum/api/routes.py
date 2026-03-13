@@ -143,6 +143,7 @@ async def create_run_stream(
         run = ExperimentRun(
             project_name=request.project_name,
             encourage_internet_search=request.encourage_internet_search,
+            response_language=request.response_language,
             task=request.task,
             agents=request.agents,
             judge=request.judge,
