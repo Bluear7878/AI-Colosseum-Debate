@@ -16,9 +16,15 @@ from colosseum.core.models import (
     FrozenContextBundle,
     FrozenContextSource,
 )
+from colosseum.services.context_media import (
+    extract_image_inputs as extract_bundle_image_inputs,
+    summarize_image_inputs,
+)
 
 
 class ContextBundleService:
+    """Freeze heterogeneous context inputs into a deterministic prompt bundle."""
+
     def freeze(self, sources: list[ContextSourceInput]) -> FrozenContextBundle:
         frozen_sources = [self._freeze_source(source) for source in sources]
         aggregate_checksum = self._hash_text(
@@ -34,7 +40,9 @@ class ContextBundleService:
             bundle_summary=bundle_summary,
         )
 
-    def render_for_prompt(self, bundle: FrozenContextBundle, max_chars: int = MAX_CONTEXT_PROMPT_CHARS) -> str:
+    def render_for_prompt(
+        self, bundle: FrozenContextBundle, max_chars: int = MAX_CONTEXT_PROMPT_CHARS
+    ) -> str:
         base_sections: list[str] = [
             f"Bundle ID: {bundle.bundle_id}",
             f"Bundle checksum: {bundle.aggregate_checksum}",
@@ -106,42 +114,11 @@ class ContextBundleService:
         return "\n\n".join(sections)
 
     def extract_image_inputs(self, bundle: FrozenContextBundle) -> list[dict[str, Any]]:
-        image_inputs: list[dict[str, Any]] = []
-        for source in bundle.sources:
-            for fragment in source.fragments:
-                if not fragment.is_binary:
-                    continue
-                media_type = fragment.media_type or source.metadata.get("media_type", "")
-                if not media_type.startswith("image/"):
-                    continue
-                image_inputs.append(
-                    {
-                        "source_id": source.source_id,
-                        "label": fragment.label,
-                        "path": fragment.path or source.resolved_path,
-                        "media_type": media_type,
-                        "checksum": fragment.checksum,
-                        "size_bytes": fragment.size_bytes,
-                        "inline_data": fragment.inline_data,
-                    }
-                )
-        return image_inputs
+        return extract_bundle_image_inputs(bundle)
 
     def summarize_image_inputs(self, bundle: FrozenContextBundle, limit: int = 4) -> str:
         image_inputs = self.extract_image_inputs(bundle)
-        if not image_inputs:
-            return "No shared image inputs."
-        entries = []
-        for item in image_inputs[:limit]:
-            size_bytes = item.get("size_bytes") or 0
-            size_text = f"{round(size_bytes / 1024, 1)} KB" if size_bytes else "size unknown"
-            entries.append(
-                f"{item['label']} ({item['media_type']}, {size_text}, checksum {str(item['checksum'])[:8]})"
-            )
-        remainder = len(image_inputs) - len(entries)
-        if remainder > 0:
-            entries.append(f"+{remainder} more image(s)")
-        return f"{len(image_inputs)} shared image(s): " + "; ".join(entries)
+        return summarize_image_inputs(image_inputs, limit=limit)
 
     def _freeze_source(self, source: ContextSourceInput) -> FrozenContextSource:
         if source.kind == ContextSourceKind.INLINE_TEXT:
@@ -195,6 +172,10 @@ class ContextBundleService:
             if not source.path:
                 raise ValueError(f"Context source {source.source_id} is missing a path.")
             path = Path(source.path)
+            if not path.exists() or not path.is_file():
+                raise ValueError(
+                    f"Context source {source.source_id} points to a missing file: {path}"
+                )
             content, truncated = self._read_text(path, source.max_chars)
             checksum = self._hash_text(content)
             return FrozenContextSource(
@@ -219,6 +200,10 @@ class ContextBundleService:
             if not source.path:
                 raise ValueError(f"Context source {source.source_id} is missing a path.")
             path = Path(source.path)
+            if not path.exists() or not path.is_file():
+                raise ValueError(
+                    f"Context source {source.source_id} points to a missing image: {path}"
+                )
             raw_bytes = path.read_bytes()
             media_type = self._infer_image_media_type(path, source.media_type)
             checksum = self._hash_bytes(raw_bytes)
@@ -254,6 +239,10 @@ class ContextBundleService:
             if not source.path:
                 raise ValueError(f"Context source {source.source_id} is missing a path.")
             directory = Path(source.path)
+            if not directory.exists() or not directory.is_dir():
+                raise ValueError(
+                    f"Context source {source.source_id} points to a missing directory: {directory}"
+                )
             files = sorted(file for file in directory.rglob("*") if file.is_file())
             fragments: list[ContextFragment] = []
             file_checksums: list[str] = []
@@ -308,6 +297,8 @@ class ContextBundleService:
         raise ValueError(f"Unsupported source kind: {source.kind}")
 
     def _read_text(self, path: Path, max_chars: int) -> tuple[str, bool]:
+        if max_chars < 0:
+            raise ValueError("max_chars must be non-negative.")
         try:
             raw = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
@@ -355,7 +346,9 @@ class ContextBundleService:
             "The raw data is preserved out-of-band for multimodal providers and excluded from text prompts."
         )
 
-    def _decode_inline_image(self, content: str, hinted_media_type: str | None) -> tuple[str, str, bytes]:
+    def _decode_inline_image(
+        self, content: str, hinted_media_type: str | None
+    ) -> tuple[str, str, bytes]:
         if not content:
             raise ValueError("Inline image source is missing content.")
         if content.startswith("data:"):
@@ -407,7 +400,10 @@ class ContextBundleService:
             sections.append(section)
             return used_chars + len(separator) + len(section), True
         if allow_truncation and available > len(PROMPT_BUDGET_TRUNCATION_MARKER) + 32:
-            truncated = section[: available - len(PROMPT_BUDGET_TRUNCATION_MARKER)] + PROMPT_BUDGET_TRUNCATION_MARKER
+            truncated = (
+                section[: available - len(PROMPT_BUDGET_TRUNCATION_MARKER)]
+                + PROMPT_BUDGET_TRUNCATION_MARKER
+            )
             sections.append(truncated)
             return max_chars, False
         return used_chars, False

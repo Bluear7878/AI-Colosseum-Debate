@@ -1,4 +1,5 @@
 """Tests for the event bus and monitor system."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -44,20 +45,22 @@ def test_event_reader_incremental(tmp_path: Path):
 def test_monitor_state_processes_events():
     state = MonitorState()
 
-    state.process_event({
-        "ts": "2026-03-13T10:00:00+00:00",
-        "type": "debate_start",
-        "run_id": "abc123",
-        "data": {
-            "topic": "Rust vs Go",
-            "token_budget": 80000,
-            "max_rounds": 5,
-            "agents": [
-                {"agent_id": "claude", "display_name": "Claude"},
-                {"agent_id": "codex", "display_name": "Codex"},
-            ],
-        },
-    })
+    state.process_event(
+        {
+            "ts": "2026-03-13T10:00:00+00:00",
+            "type": "debate_start",
+            "run_id": "abc123",
+            "data": {
+                "topic": "Rust vs Go",
+                "token_budget": 80000,
+                "max_rounds": 5,
+                "agents": [
+                    {"agent_id": "claude", "display_name": "Claude"},
+                    {"agent_id": "codex", "display_name": "Codex"},
+                ],
+            },
+        }
+    )
     assert state.run_id == "abc123"
     assert state.topic == "Rust vs Go"
     assert state.token_budget == 80000
@@ -65,64 +68,74 @@ def test_monitor_state_processes_events():
     assert "claude" in state.agents
     assert "codex" in state.agents
 
-    state.process_event({
-        "ts": "2026-03-13T10:00:01+00:00",
-        "type": "phase",
-        "run_id": "abc123",
-        "data": {"phase": "planning", "status": "planning"},
-    })
+    state.process_event(
+        {
+            "ts": "2026-03-13T10:00:01+00:00",
+            "type": "phase",
+            "run_id": "abc123",
+            "data": {"phase": "planning", "status": "planning"},
+        }
+    )
     assert state.phase == "planning"
     assert "init" in state.completed_phases
     assert "context" in state.completed_phases
 
-    state.process_event({
-        "ts": "2026-03-13T10:00:02+00:00",
-        "type": "agent_thinking",
-        "run_id": "abc123",
-        "data": {"agent_id": "claude", "display_name": "Claude", "round_index": 1},
-    })
+    state.process_event(
+        {
+            "ts": "2026-03-13T10:00:02+00:00",
+            "type": "agent_thinking",
+            "run_id": "abc123",
+            "data": {"agent_id": "claude", "display_name": "Claude", "round_index": 1},
+        }
+    )
     assert "thinking" in state.agents["claude"]["status"]
 
-    state.process_event({
-        "ts": "2026-03-13T10:00:03+00:00",
-        "type": "agent_message",
-        "run_id": "abc123",
-        "data": {
-            "agent_id": "claude",
-            "display_name": "Claude",
-            "novelty_score": 0.85,
-            "usage": {"total_tokens": 1200},
-        },
-    })
+    state.process_event(
+        {
+            "ts": "2026-03-13T10:00:03+00:00",
+            "type": "agent_message",
+            "run_id": "abc123",
+            "data": {
+                "agent_id": "claude",
+                "display_name": "Claude",
+                "novelty_score": 0.85,
+                "usage": {"total_tokens": 1200},
+            },
+        }
+    )
     assert "responded" in state.agents["claude"]["status"]
     assert state.agents["claude"]["tokens"] == 1200
     assert state.total_tokens == 1200
 
-    state.process_event({
-        "ts": "2026-03-13T10:00:04+00:00",
-        "type": "judge_decision",
-        "run_id": "abc123",
-        "data": {
-            "action": "continue_debate",
-            "confidence": 0.72,
-            "disagreement_level": 0.65,
-            "focus": "correctness, performance",
-            "next_round_type": "rebuttal",
-        },
-    })
+    state.process_event(
+        {
+            "ts": "2026-03-13T10:00:04+00:00",
+            "type": "judge_decision",
+            "run_id": "abc123",
+            "data": {
+                "action": "continue_debate",
+                "confidence": 0.72,
+                "disagreement_level": 0.65,
+                "focus": "correctness, performance",
+                "next_round_type": "rebuttal",
+            },
+        }
+    )
     assert state.last_judge_action == "continue_debate"
     assert state.last_judge_confidence == 0.72
 
-    state.process_event({
-        "ts": "2026-03-13T10:00:05+00:00",
-        "type": "verdict",
-        "run_id": "abc123",
-        "data": {
-            "verdict_type": "winner",
-            "winners": ["Claude"],
-            "confidence": 0.88,
-        },
-    })
+    state.process_event(
+        {
+            "ts": "2026-03-13T10:00:05+00:00",
+            "type": "verdict",
+            "run_id": "abc123",
+            "data": {
+                "verdict_type": "winner",
+                "winners": ["Claude"],
+                "confidence": 0.88,
+            },
+        }
+    )
     assert state.verdict_type == "winner"
     assert state.status == "completed"
 

@@ -2,7 +2,13 @@ import json
 from pathlib import Path
 
 from colosseum.core.config import MAX_CONTEXT_PROMPT_CHARS
-from colosseum.core.models import ContextSourceInput, ContextSourceKind, ProviderConfig, ProviderType, RiskItem
+from colosseum.core.models import (
+    ContextSourceInput,
+    ContextSourceKind,
+    ProviderConfig,
+    ProviderType,
+    RiskItem,
+)
 from colosseum.providers.command import CommandProvider
 from colosseum.providers.factory import build_provider
 from colosseum.services.context_bundle import ContextBundleService

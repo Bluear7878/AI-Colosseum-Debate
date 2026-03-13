@@ -62,7 +62,10 @@ class ResponseNormalizer:
             assumptions=sections["assumptions"],
             architecture=sections["architecture"],
             implementation_strategy=sections["implementation_strategy"],
-            risks=[RiskItem(title=risk, severity="medium", mitigation="Clarify during review.") for risk in sections["risks"]],
+            risks=[
+                RiskItem(title=risk, severity="medium", mitigation="Clarify during review.")
+                for risk in sections["risks"]
+            ],
             strengths=sections["strengths"],
             weaknesses=sections["weaknesses"],
             raw_response=raw_content,

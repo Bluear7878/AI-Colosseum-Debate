@@ -1,56 +1,109 @@
-"""Synthesize a FinalReport from a completed ExperimentRun."""
+"""Synthesize a FinalReport from a completed or finalizing ExperimentRun."""
 
 from __future__ import annotations
 
 import logging
 
-from colosseum.core.models import ExperimentRun, FinalReport, JudgeMode, VerdictType
+from colosseum.core.models import ExperimentRun, FinalReport, JudgeMode, JudgeVerdict, VerdictType
 from colosseum.services.provider_runtime import ProviderRuntimeService
 
 logger = logging.getLogger("colosseum.report_synthesizer")
 
 
 class ReportSynthesizer:
+    """Build a concise executive report from the debate transcript and verdict."""
+
     def __init__(self, provider_runtime: ProviderRuntimeService) -> None:
         self.provider_runtime = provider_runtime
 
-    async def synthesize(self, run: ExperimentRun) -> FinalReport:
+    async def synthesize(
+        self,
+        run: ExperimentRun,
+        verdict: JudgeVerdict | None = None,
+    ) -> FinalReport:
+        """Return a final report for *run* using an explicit verdict when provided.
+
+        Some UI/API paths compute the verdict immediately before persisting it on
+        the run object. Accepting the fresh verdict here prevents those callers
+        from synthesizing a stale "no verdict" report.
+        """
+        resolved_verdict = verdict or run.verdict
         if run.judge.mode == JudgeMode.AI and run.judge.provider:
             try:
-                result = await self._ai_synthesize(run)
+                result = await self._ai_synthesize(run, resolved_verdict)
                 if result:
                     return result
             except Exception:
-                logger.warning("AI report synthesis failed, falling back to heuristic", exc_info=True)
-        return self._automated_synthesize(run)
+                logger.warning(
+                    "AI report synthesis failed, falling back to heuristic", exc_info=True
+                )
+        return self._automated_synthesize(run, resolved_verdict)
 
-    def _automated_synthesize(self, run: ExperimentRun) -> FinalReport:
-        verdict = run.verdict
+    def _winner_names(
+        self,
+        run: ExperimentRun,
+        verdict: JudgeVerdict | None,
+    ) -> list[str]:
+        if verdict is None:
+            return []
+        names: list[str] = []
+        seen: set[str] = set()
+        for winning_id in verdict.winning_plan_ids:
+            match = next((plan for plan in run.plans if plan.plan_id == winning_id), None)
+            display_name = match.display_name if match else winning_id[:8]
+            if display_name not in seen:
+                names.append(display_name)
+                seen.add(display_name)
+        return names
+
+    def _headline_for_verdict(
+        self,
+        run: ExperimentRun,
+        verdict: JudgeVerdict | None,
+    ) -> str:
+        if verdict is None:
+            return f"Debate on '{run.task.title}' ended without a final verdict."
+
+        winner_names = self._winner_names(run, verdict)
+        if verdict.verdict_type == VerdictType.MERGED:
+            if winner_names:
+                return (
+                    f"Merged recommendation from {' + '.join(winner_names)} — {verdict.rationale}"
+                )
+            return f"Merged recommendation — {verdict.rationale}"
+
+        if winner_names:
+            return f"{winner_names[0]} wins — {verdict.rationale}"
+        return f"Verdict: {verdict.verdict_type.value.upper()} — {verdict.rationale}"
+
+    def _automated_synthesize(
+        self,
+        run: ExperimentRun,
+        verdict: JudgeVerdict | None,
+    ) -> FinalReport:
         plans = run.plans
-
-        # --- winner info ---
-        winner_name = ""
-        if verdict and verdict.winning_plan_ids:
-            wid = verdict.winning_plan_ids[0]
-            match = next((p for p in plans if p.plan_id == wid), None)
-            winner_name = match.display_name if match else wid[:8]
+        winner_names = self._winner_names(run, verdict)
+        winner_name = winner_names[0] if winner_names else ""
 
         # --- one_line_verdict ---
-        if verdict and winner_name:
-            one_line = f"{winner_name} wins — {verdict.rationale}"
-        elif verdict:
-            one_line = f"Verdict: {verdict.verdict_type.value.upper()} — {verdict.rationale}"
-        else:
-            one_line = f"Debate on '{run.task.title}' ended without a final verdict."
+        one_line = self._headline_for_verdict(run, verdict)
 
         # --- executive_summary ---
+        if verdict and verdict.verdict_type == VerdictType.MERGED:
+            lead = (
+                f"A merged recommendation from {' + '.join(winner_names)} emerged"
+                if winner_names
+                else "A merged recommendation emerged"
+            )
+        elif winner_name:
+            lead = f"{winner_name} emerged as the winner"
+        else:
+            lead = "The debate concluded"
         adopted_count = sum(
-            len(rnd.adjudication.adopted_arguments)
-            for rnd in run.debate_rounds
-            if rnd.adjudication
+            len(rnd.adjudication.adopted_arguments) for rnd in run.debate_rounds if rnd.adjudication
         )
         summary = (
-            f"{winner_name + ' emerged as the winner' if winner_name else 'The debate concluded'} "
+            f"{lead} "
             f"after {len(run.debate_rounds)} round(s). "
             f"{adopted_count} argument(s) were formally adopted by the judge. "
             f"{verdict.rationale if verdict else ''}"
@@ -58,13 +111,13 @@ class ReportSynthesizer:
 
         # --- key_conclusions: per-agent adopted arguments ---
         conclusions: list[str] = []
+        if verdict and verdict.synthesized_plan and verdict.synthesized_plan.summary:
+            conclusions.append(f"[Merged plan] {verdict.synthesized_plan.summary}")
         for rnd in run.debate_rounds:
             adj = rnd.adjudication
             if adj and adj.adopted_arguments:
                 for adopted in adj.adopted_arguments[:2]:
-                    conclusions.append(
-                        f"[Adopted from {adopted.display_name}] {adopted.summary}"
-                    )
+                    conclusions.append(f"[Adopted from {adopted.display_name}] {adopted.summary}")
         if verdict and verdict.selected_strengths:
             for s in verdict.selected_strengths[:2]:
                 conclusions.append(s)
@@ -92,7 +145,11 @@ class ReportSynthesizer:
                 reasoning_parts.append(decision.reasoning)
         if verdict:
             reasoning_parts.append(f"Final confidence: {verdict.confidence:.2f}")
-        verdict_explanation = " ".join(reasoning_parts[-4:]) if reasoning_parts else "No detailed reasoning available."
+        verdict_explanation = (
+            " ".join(reasoning_parts[-4:])
+            if reasoning_parts
+            else "No detailed reasoning available."
+        )
 
         # --- recommendations ---
         recommendations: list[str] = []
@@ -115,19 +172,26 @@ class ReportSynthesizer:
             recommendations=recommendations,
         )
 
-    async def _ai_synthesize(self, run: ExperimentRun) -> FinalReport | None:
-        winner_name = ""
-        if run.verdict and run.verdict.winning_plan_ids:
-            wid = run.verdict.winning_plan_ids[0]
-            match = next((p for p in run.plans if p.plan_id == wid), None)
-            winner_name = match.display_name if match else wid[:8]
+    async def _ai_synthesize(
+        self,
+        run: ExperimentRun,
+        verdict: JudgeVerdict | None,
+    ) -> FinalReport | None:
+        winner_names = self._winner_names(run, verdict)
 
         verdict_text = ""
-        if run.verdict:
-            verdict_text = (
-                f" Winner: {winner_name}. "
-                f"Rationale: {run.verdict.rationale}"
+        if verdict:
+            subject = (
+                " + ".join(winner_names)
+                if winner_names
+                else verdict.verdict_type.value.replace("_", " ")
             )
+            label = (
+                "Merged recommendation" if verdict.verdict_type == VerdictType.MERGED else "Winner"
+            )
+            verdict_text = f" {label}: {subject}. Rationale: {verdict.rationale}"
+            if verdict.synthesized_plan and verdict.synthesized_plan.summary:
+                verdict_text += f" Synthesized plan summary: {verdict.synthesized_plan.summary}"
 
         # Build per-agent adopted/not-adopted summary
         agent_names = {a.agent_id: a.display_name for a in run.agents}
@@ -139,7 +203,9 @@ class ReportSynthesizer:
         agent_context = ""
         for aid, summaries in adopted_by_agent.items():
             name = agent_names.get(aid, aid)
-            agent_context += f"\n- {name} (adopted {len(summaries)} argument(s)): {'; '.join(summaries[:2])}"
+            agent_context += (
+                f"\n- {name} (adopted {len(summaries)} argument(s)): {'; '.join(summaries[:2])}"
+            )
 
         instructions = (
             f"Synthesize a final executive report for this debate. "
@@ -173,8 +239,8 @@ class ReportSynthesizer:
                 "run_id": run.run_id,
                 "task_title": run.task.title,
                 "task_problem": run.task.problem_statement,
-                "verdict_type": run.verdict.verdict_type.value if run.verdict else "none",
-                "verdict_rationale": run.verdict.rationale if run.verdict else "",
+                "verdict_type": verdict.verdict_type.value if verdict else "none",
+                "verdict_rationale": verdict.rationale if verdict else "",
                 "round_count": len(run.debate_rounds),
             },
         )

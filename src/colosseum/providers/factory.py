@@ -43,7 +43,8 @@ def build_provider(config: ProviderConfig) -> BaseProvider:
         model = config.model or "claude-sonnet-4-6"
         return CommandProvider(
             model_name=model,
-            command=config.command or [sys.executable, WRAPPER_SCRIPT, "--provider", "claude", "--model", model],
+            command=config.command
+            or [sys.executable, WRAPPER_SCRIPT, "--provider", "claude", "--model", model],
             env=config.env,
             timeout_seconds=_timeout(config, 300),
         )
@@ -51,7 +52,8 @@ def build_provider(config: ProviderConfig) -> BaseProvider:
         model = config.model or "o3"
         return CommandProvider(
             model_name=model,
-            command=config.command or [sys.executable, WRAPPER_SCRIPT, "--provider", "codex", "--model", model],
+            command=config.command
+            or [sys.executable, WRAPPER_SCRIPT, "--provider", "codex", "--model", model],
             env=config.env,
             timeout_seconds=_timeout(config, 300),
         )
@@ -59,7 +61,8 @@ def build_provider(config: ProviderConfig) -> BaseProvider:
         model = config.model or "gemini-2.5-pro"
         return CommandProvider(
             model_name=model,
-            command=config.command or [sys.executable, WRAPPER_SCRIPT, "--provider", "gemini", "--model", model],
+            command=config.command
+            or [sys.executable, WRAPPER_SCRIPT, "--provider", "gemini", "--model", model],
             env=config.env,
             timeout_seconds=_timeout(config, 300),
         )
@@ -67,15 +70,22 @@ def build_provider(config: ProviderConfig) -> BaseProvider:
         ollama_model = config.ollama_model or _strip_provider_prefix(config.model) or "llama3.3"
         return CommandProvider(
             model_name=config.model or f"ollama:{ollama_model}",
-            command=config.command or [sys.executable, WRAPPER_SCRIPT, "--provider", "ollama", "--model", ollama_model],
+            command=config.command
+            or [sys.executable, WRAPPER_SCRIPT, "--provider", "ollama", "--model", ollama_model],
             env=config.env,
             timeout_seconds=_timeout(config, 600),
         )
     if config.type == ProviderType.HUGGINGFACE_LOCAL:
-        hf_model = config.hf_model or config.ollama_model or _strip_provider_prefix(config.model) or "llama3.3"
+        hf_model = (
+            config.hf_model
+            or config.ollama_model
+            or _strip_provider_prefix(config.model)
+            or "llama3.3"
+        )
         return CommandProvider(
             model_name=config.model or f"hf:{hf_model}",
-            command=config.command or [sys.executable, WRAPPER_SCRIPT, "--provider", "huggingface", "--model", hf_model],
+            command=config.command
+            or [sys.executable, WRAPPER_SCRIPT, "--provider", "huggingface", "--model", hf_model],
             env=config.env,
             timeout_seconds=_timeout(config, 600),
         )

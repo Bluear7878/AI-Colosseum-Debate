@@ -15,7 +15,9 @@ class BudgetManager:
             return 1.0
         return min(1.0, ledger.total.total_tokens / policy.total_token_budget)
 
-    def can_start_round(self, policy: BudgetPolicy, ledger: BudgetLedger, next_round_index: int) -> bool:
+    def can_start_round(
+        self, policy: BudgetPolicy, ledger: BudgetLedger, next_round_index: int
+    ) -> bool:
         if next_round_index > policy.max_rounds:
             ledger.exhausted = True
             ledger.stop_reason = "maximum_rounds_reached"
@@ -26,6 +28,8 @@ class BudgetManager:
             return False
         return True
 
-    def round_over_limit(self, policy: BudgetPolicy, round_index: int, ledger: BudgetLedger) -> bool:
+    def round_over_limit(
+        self, policy: BudgetPolicy, round_index: int, ledger: BudgetLedger
+    ) -> bool:
         usage = ledger.by_round.get(str(round_index), UsageMetrics())
         return usage.total_tokens >= policy.per_round_token_limit

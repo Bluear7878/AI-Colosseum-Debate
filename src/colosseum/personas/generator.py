@@ -76,9 +76,7 @@ class PersonaGenerator:
 
         personality_hint = self._select_personality_hint(personality)
         style_hint = self._select_style_hint(debate_style)
-        description = (
-            f"{profession} lens with a {personality.lower()} temperament and a {debate_style.lower()} debate style."
-        )
+        description = f"{profession} lens with a {personality.lower()} temperament and a {debate_style.lower()} debate style."
 
         content = "\n".join(
             [
@@ -112,7 +110,8 @@ class PersonaGenerator:
                 "- Do not invent background facts about the user that were not provided.",
                 "",
                 "## User Notes",
-                owner_notes or "- No extra notes were provided. Infer conservatively from the survey only.",
+                owner_notes
+                or "- No extra notes were provided. Infer conservatively from the survey only.",
             ]
         ).strip()
 

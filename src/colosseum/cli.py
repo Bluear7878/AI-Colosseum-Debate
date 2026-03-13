@@ -16,10 +16,12 @@ Usage:
     colosseum delete <run_id|all>            Delete a battle run
     colosseum check                          Verify CLI tool availability
 """
+
 from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
 import os
 import shutil
 import subprocess
@@ -62,10 +64,7 @@ DEPTH_LABELS = {1: "Quick", 2: "Brief", 3: "Standard", 4: "Thorough", 5: "Deep D
 # At startup the server probes each CLI to find which ones actually work,
 # then serves only the verified models via /models.
 
-import json as _json
-import logging as _logging
-
-_log = _logging.getLogger("colosseum.cli")
+_log = logging.getLogger("colosseum.cli")
 
 _CANDIDATE_MODELS: dict[str, list[dict]] = {
     "claude": [
@@ -101,13 +100,33 @@ _PROVIDER_DISPLAY = {"claude": "Claude", "codex": "OpenAI", "gemini": "Gemini"}
 # ── Fallback model catalog (used when probing hasn't run yet) ──
 
 _FALLBACK_MODELS = [
-    {"id": "claude:claude-opus-4-6", "name": "Claude Opus 4.6", "type": "claude_cli", "tier": "paid"},
-    {"id": "claude:claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "type": "claude_cli", "tier": "paid"},
-    {"id": "claude:claude-haiku-4-5-20251001", "name": "Claude Haiku 4.5", "type": "claude_cli", "tier": "paid"},
+    {
+        "id": "claude:claude-opus-4-6",
+        "name": "Claude Opus 4.6",
+        "type": "claude_cli",
+        "tier": "paid",
+    },
+    {
+        "id": "claude:claude-sonnet-4-6",
+        "name": "Claude Sonnet 4.6",
+        "type": "claude_cli",
+        "tier": "paid",
+    },
+    {
+        "id": "claude:claude-haiku-4-5-20251001",
+        "name": "Claude Haiku 4.5",
+        "type": "claude_cli",
+        "tier": "paid",
+    },
     {"id": "codex:gpt-5.4", "name": "GPT-5.4", "type": "codex_cli", "tier": "paid"},
     {"id": "codex:gpt-5.3-codex", "name": "GPT-5.3 Codex", "type": "codex_cli", "tier": "paid"},
     {"id": "gemini:gemini-2.5-pro", "name": "Gemini 2.5 Pro", "type": "gemini_cli", "tier": "paid"},
-    {"id": "gemini:gemini-2.5-flash", "name": "Gemini 2.5 Flash", "type": "gemini_cli", "tier": "paid"},
+    {
+        "id": "gemini:gemini-2.5-flash",
+        "name": "Gemini 2.5 Flash",
+        "type": "gemini_cli",
+        "tier": "paid",
+    },
     # Free (local via Ollama)
     {"id": "ollama:llama3.3", "name": "Llama 3.3 70B", "type": "ollama", "tier": "free"},
     {"id": "ollama:llama3.2", "name": "Llama 3.2 3B", "type": "ollama", "tier": "free"},
@@ -119,6 +138,7 @@ _FALLBACK_MODELS = [
 
 
 # ── Per-provider model probing ────────────────────────────────────
+
 
 def _probe_model(cli_cmd: str, model: str, provider: str) -> bool:
     """Quick probe: run a minimal prompt and check if the model responds."""
@@ -176,17 +196,19 @@ def probe_provider_models(provider: str) -> list[dict]:
         status = "OK" if ok else "UNAVAILABLE"
         _log.info("  %s %s → %s", provider, model_id, status)
         if ok:
-            verified.append({
-                "id": f"{provider}:{model_id}" if provider != "codex" else f"codex:{model_id}",
-                "model": model_id,
-                "name": f"{_PROVIDER_DISPLAY.get(provider, provider)} {c['label']}",
-                "label": c["label"],
-                "type": _PROVIDER_TYPE_MAP.get(provider, "command"),
-                "tier": "paid",
-                "provider": provider,
-                "icon": _PROVIDER_ICON.get(provider, ""),
-                "available": True,
-            })
+            verified.append(
+                {
+                    "id": f"{provider}:{model_id}" if provider != "codex" else f"codex:{model_id}",
+                    "model": model_id,
+                    "name": f"{_PROVIDER_DISPLAY.get(provider, provider)} {c['label']}",
+                    "label": c["label"],
+                    "type": _PROVIDER_TYPE_MAP.get(provider, "command"),
+                    "tier": "paid",
+                    "provider": provider,
+                    "icon": _PROVIDER_ICON.get(provider, ""),
+                    "available": True,
+                }
+            )
     return verified
 
 
@@ -196,7 +218,10 @@ def _discover_ollama_models() -> list[dict]:
         return []
     try:
         result = subprocess.run(
-            ["ollama", "list"], capture_output=True, text=True, timeout=10,
+            ["ollama", "list"],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return []
@@ -211,17 +236,19 @@ def _discover_ollama_models() -> list[dict]:
             size = parts[2] if len(parts) >= 3 else ""
             if size:
                 display = f"{display} ({size})"
-            models.append({
-                "id": f"ollama:{model_id}",
-                "model": model_id,
-                "name": display,
-                "label": display,
-                "type": "ollama",
-                "tier": "free",
-                "provider": "ollama",
-                "icon": "",
-                "available": True,
-            })
+            models.append(
+                {
+                    "id": f"ollama:{model_id}",
+                    "model": model_id,
+                    "name": display,
+                    "label": display,
+                    "type": "ollama",
+                    "tier": "free",
+                    "provider": "ollama",
+                    "icon": "",
+                    "available": True,
+                }
+            )
         return models
     except Exception:
         return []
@@ -282,12 +309,24 @@ def probe_all_models() -> list[dict]:
     if codex_default:
         codex_id = f"codex:{codex_default}"
         if codex_id not in seen:
-            idx = next((i for i, m in enumerate(all_models) if m.get("provider") == "codex"), len(all_models))
-            all_models.insert(idx, {
-                "id": codex_id, "model": codex_default, "name": codex_default,
-                "label": codex_default, "type": "codex_cli", "tier": "paid",
-                "provider": "codex", "icon": "", "available": True,
-            })
+            idx = next(
+                (i for i, m in enumerate(all_models) if m.get("provider") == "codex"),
+                len(all_models),
+            )
+            all_models.insert(
+                idx,
+                {
+                    "id": codex_id,
+                    "model": codex_default,
+                    "name": codex_default,
+                    "label": codex_default,
+                    "type": "codex_cli",
+                    "tier": "paid",
+                    "provider": "codex",
+                    "icon": "",
+                    "available": True,
+                },
+            )
             seen.add(codex_id)
 
     # Ollama
@@ -322,7 +361,11 @@ def discover_models() -> list[dict]:
         if m["tier"] != "paid":
             continue
         cli_name = m["id"].split(":")[0]
-        installed = shutil.which(cli_name) is not None if cli_name != "codex" else shutil.which("codex") is not None
+        installed = (
+            shutil.which(cli_name) is not None
+            if cli_name != "codex"
+            else shutil.which("codex") is not None
+        )
         entry = {**m, "available": installed}
         models.append(entry)
         seen_ids.add(m["id"])
@@ -400,14 +443,18 @@ def _print_header():
 
 
 def _wrap(text: str, indent: int = 4, width: int = 76) -> str:
-    return textwrap.fill(text, width=width, initial_indent=" " * indent, subsequent_indent=" " * indent)
+    return textwrap.fill(
+        text, width=width, initial_indent=" " * indent, subsequent_indent=" " * indent
+    )
 
 
 # ── Subcommands ──────────────────────────────────────────────────
 
+
 def cmd_serve(args: argparse.Namespace) -> None:
     """Start the web UI server."""
     from colosseum.main import run
+
     _print_header()
     print(f"  Starting web server on {CYAN}http://127.0.0.1:8000{RST}")
     print(f"  Press {DIM}Ctrl+C{RST} to stop.\n")
@@ -454,7 +501,9 @@ def cmd_personas(_args: argparse.Namespace) -> None:
     print(f"  {BOLD}Available Personas{RST}\n")
     for p in personas:
         source_tag = f"{GOLD}builtin{RST}" if p["source"] == "builtin" else f"{CYAN}custom{RST}"
-        print(f"    [{source_tag}] {BOLD}{p['persona_id']}{RST}  {DIM}{p.get('description', '')}{RST}")
+        print(
+            f"    [{source_tag}] {BOLD}{p['persona_id']}{RST}  {DIM}{p.get('description', '')}{RST}"
+        )
     print()
 
 
@@ -473,7 +522,9 @@ def cmd_history(_args: argparse.Namespace) -> None:
     failed = sum(1 for r in runs if r.status == "failed")
     total_tokens = sum(r.total_tokens for r in runs)
 
-    print(f"  {BOLD}Past Battles{RST}  {DIM}({len(runs)} total: {completed} completed, {failed} failed, {total_tokens} tok){RST}\n")
+    print(
+        f"  {BOLD}Past Battles{RST}  {DIM}({len(runs)} total: {completed} completed, {failed} failed, {total_tokens} tok){RST}\n"
+    )
     for r in runs:
         status_color = GREEN if r.status == "completed" else RED if r.status == "failed" else GOLD
         verdict = r.verdict_type or "pending"
@@ -503,7 +554,9 @@ def cmd_show(args: argparse.Namespace) -> None:
     total_tok = run.budget_ledger.total.total_tokens
     budget_tok = run.budget_policy.total_token_budget
     budget_pct = f"{total_tok / budget_tok * 100:.0f}%" if budget_tok > 0 else "n/a"
-    print(f"  {DIM}Status: {run.status}  Agents: {len(run.agents)}  Rounds: {len(run.debate_rounds)}  Tokens: {total_tok}/{budget_tok} ({budget_pct}){RST}\n")
+    print(
+        f"  {DIM}Status: {run.status}  Agents: {len(run.agents)}  Rounds: {len(run.debate_rounds)}  Tokens: {total_tok}/{budget_tok} ({budget_pct}){RST}\n"
+    )
 
     # Plans
     if run.plans:
@@ -517,7 +570,9 @@ def cmd_show(args: argparse.Namespace) -> None:
 
     # Debate rounds
     for dr in run.debate_rounds:
-        print(f"  {CYAN}{BOLD}Round {dr.index}: {dr.round_type}{RST}  {DIM}{dr.usage.total_tokens} tok{RST}")
+        print(
+            f"  {CYAN}{BOLD}Round {dr.index}: {dr.round_type}{RST}  {DIM}{dr.usage.total_tokens} tok{RST}"
+        )
         if dr.summary.key_disagreements:
             print(f"    Disagreements: {', '.join(dr.summary.key_disagreements[:3])}")
         if dr.summary.moderator_note:
@@ -527,13 +582,16 @@ def cmd_show(args: argparse.Namespace) -> None:
     # Verdict
     if run.verdict:
         v = run.verdict
-        vtype_color = MAGENTA if v.verdict_type == "merged" else GOLD
+        vtype_color = MAGENTA if v.verdict_type.value == "merged" else GOLD
         print(f"  {vtype_color}{BOLD}Verdict: {v.verdict_type.upper()}{RST}")
         print(_wrap(v.rationale, indent=4))
         if v.selected_strengths:
             print(f"    {GREEN}Strengths:{RST} {', '.join(v.selected_strengths[:4])}")
         if v.rejected_risks:
             print(f"    {RED}Risks:{RST} {', '.join(v.rejected_risks[:3])}")
+        if v.synthesized_plan:
+            print(f"    {MAGENTA}Merged Plan:{RST}")
+            print(_wrap(v.synthesized_plan.summary, indent=6))
         print(f"    {DIM}Confidence: {v.confidence:.2f}  Stop: {v.stop_reason}{RST}")
 
     # Token usage summary
@@ -604,7 +662,9 @@ def _check_tool_status(tool_name: str, info: dict) -> dict:
     try:
         result = subprocess.run(
             info["auth_check_cmd"],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         version = result.stdout.strip() or result.stderr.strip()
         if version:
@@ -623,17 +683,26 @@ def _check_tool_status(tool_name: str, info: dict) -> dict:
             if tool_name == "claude":
                 probe = subprocess.run(
                     ["claude", "-p", "say ok"],
-                    capture_output=True, text=True, timeout=30, env=probe_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=probe_env,
                 )
             elif tool_name == "codex":
                 probe = subprocess.run(
                     ["codex", "exec", "say ok"],
-                    capture_output=True, text=True, timeout=30, env=probe_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=probe_env,
                 )
             elif tool_name == "gemini":
                 probe = subprocess.run(
                     ["gemini", "-p", "say ok"],
-                    capture_output=True, text=True, timeout=30, env=probe_env,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    env=probe_env,
                 )
             else:
                 probe = None
@@ -643,7 +712,12 @@ def _check_tool_status(tool_name: str, info: dict) -> dict:
                 status["auth_detail"] = "authenticated"
             elif probe:
                 combined = (probe.stdout + probe.stderr).lower()
-                if "login" in combined or "auth" in combined or "sign in" in combined or "credentials" in combined:
+                if (
+                    "login" in combined
+                    or "auth" in combined
+                    or "sign in" in combined
+                    or "credentials" in combined
+                ):
                     status["auth_detail"] = "not authenticated"
                 elif "quota" in combined or "rate" in combined or "limit" in combined:
                     status["auth_ok"] = True
@@ -658,10 +732,15 @@ def _check_tool_status(tool_name: str, info: dict) -> dict:
         # ollama — no auth needed, just check if running
         try:
             probe = subprocess.run(
-                ["ollama", "list"], capture_output=True, text=True, timeout=10,
+                ["ollama", "list"],
+                capture_output=True,
+                text=True,
+                timeout=10,
             )
             status["auth_ok"] = probe.returncode == 0
-            status["auth_detail"] = "running" if status["auth_ok"] else "not running (start with: ollama serve)"
+            status["auth_detail"] = (
+                "running" if status["auth_ok"] else "not running (start with: ollama serve)"
+            )
         except Exception:
             status["auth_detail"] = "not running"
 
@@ -683,7 +762,11 @@ def _install_tool(tool_name: str, info: dict) -> bool:
     print(f"    {DIM}Running: {install_cmd}{RST}")
     try:
         result = subprocess.run(
-            install_cmd, shell=True, capture_output=True, text=True, timeout=120,
+            install_cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode == 0:
             # Verify installation
@@ -692,7 +775,9 @@ def _install_tool(tool_name: str, info: dict) -> bool:
                 return True
             else:
                 print(f"    {GOLD}Install completed but '{info['cmd']}' not found in PATH.{RST}")
-                print(f"    {DIM}You may need to restart your shell or add npm global bin to PATH.{RST}")
+                print(
+                    f"    {DIM}You may need to restart your shell or add npm global bin to PATH.{RST}"
+                )
                 return False
         else:
             stderr = result.stderr.strip()[:200]
@@ -718,7 +803,8 @@ def _run_login(tool_name: str, info: dict) -> bool:
     print(f"    {DIM}(This will open an interactive login flow){RST}\n")
     try:
         result = subprocess.run(
-            login_cmd.split(), timeout=120,
+            login_cmd.split(),
+            timeout=120,
         )
         return result.returncode == 0
     except subprocess.TimeoutExpired:
@@ -764,7 +850,11 @@ def cmd_setup(args: argparse.Namespace) -> None:
                 do_install = True
             else:
                 try:
-                    answer = input(f"    Install {tool_name}? ({info['install_cmd']}) [Y/n] ").strip().lower()
+                    answer = (
+                        input(f"    Install {tool_name}? ({info['install_cmd']}) [Y/n] ")
+                        .strip()
+                        .lower()
+                    )
                     do_install = answer in ("", "y", "yes")
                 except (EOFError, KeyboardInterrupt):
                     print()
@@ -796,7 +886,11 @@ def cmd_setup(args: argparse.Namespace) -> None:
                     do_login = True
                 else:
                     try:
-                        answer = input(f"    Run '{info['login']}' to authenticate? [Y/n] ").strip().lower()
+                        answer = (
+                            input(f"    Run '{info['login']}' to authenticate? [Y/n] ")
+                            .strip()
+                            .lower()
+                        )
                         do_login = answer in ("", "y", "yes")
                     except (EOFError, KeyboardInterrupt):
                         print()
@@ -825,7 +919,9 @@ def cmd_setup(args: argparse.Namespace) -> None:
     for s in summary:
         installed_mark = f"{GREEN}✓{RST}" if s["installed"] else f"{RED}✗{RST}"
         auth_mark = f"{GREEN}✓{RST}" if s["auth_ok"] else f"{GOLD}–{RST}"
-        print(f"    {installed_mark} {BOLD}{s['tool']:<10}{RST}  auth: {auth_mark}  {DIM}{s.get('auth_detail', '')}{RST}")
+        print(
+            f"    {installed_mark} {BOLD}{s['tool']:<10}{RST}  auth: {auth_mark}  {DIM}{s.get('auth_detail', '')}{RST}"
+        )
 
     ready = [s for s in summary if s["installed"] and s["auth_ok"]]
     if ready:
@@ -842,9 +938,11 @@ def cmd_setup(args: argparse.Namespace) -> None:
                     examples.append(first_model)
         if len(examples) >= 2:
             print(f"\n  {GREEN}Ready!{RST} Try:")
-            print(f"    colosseum debate -t \"Your topic\" -g {examples[0]} {examples[1]}")
+            print(f'    colosseum debate -t "Your topic" -g {examples[0]} {examples[1]}')
     elif summary:
-        print(f"\n  {GOLD}No providers fully ready.{RST} Install and authenticate at least one to get started.")
+        print(
+            f"\n  {GOLD}No providers fully ready.{RST} Install and authenticate at least one to get started."
+        )
     print()
 
 
@@ -881,7 +979,9 @@ def cmd_check(_args: argparse.Namespace) -> None:
             try:
                 result = subprocess.run(
                     [info["cmd"], "--version"],
-                    capture_output=True, text=True, timeout=5,
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
                 )
                 version = result.stdout.strip() or result.stderr.strip()
                 if version:
@@ -892,7 +992,9 @@ def cmd_check(_args: argparse.Namespace) -> None:
 
     print(f"  {BOLD}Summary:{RST}")
     print(f"    All CLI tools (claude, codex, gemini) use your {GOLD}existing subscription{RST}.")
-    print(f"    They authenticate via OAuth to your account — {GREEN}no separate API key charges{RST}.")
+    print(
+        f"    They authenticate via OAuth to your account — {GREEN}no separate API key charges{RST}."
+    )
     print(f"    Ollama runs models {CYAN}locally{RST} on your hardware for free.\n")
 
 
@@ -945,6 +1047,7 @@ def _parse_gladiator(spec: str) -> dict:
 def cmd_monitor(args: argparse.Namespace) -> None:
     """Open the live monitor dashboard for an active debate."""
     from colosseum.monitor import run_monitor
+
     run_id = getattr(args, "run_id", None)
     run_monitor(run_id=run_id)
 
@@ -959,8 +1062,15 @@ def _launch_tmux_monitor(run_id: str) -> bool:
     try:
         subprocess.Popen(
             [
-                "tmux", "split-window", "-h", "-l", "70",
-                sys.executable, "-m", "colosseum.monitor", run_id,
+                "tmux",
+                "split-window",
+                "-h",
+                "-l",
+                "70",
+                sys.executable,
+                "-m",
+                "colosseum.monitor",
+                run_id,
             ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -992,7 +1102,10 @@ def cmd_debate(args: argparse.Namespace) -> None:
     if len(gladiator_specs) < 2:
         if json_output:
             import json as _json
-            print(_json.dumps({"error": f"Need at least 2 gladiators. Got {len(gladiator_specs)}."}))
+
+            print(
+                _json.dumps({"error": f"Need at least 2 gladiators. Got {len(gladiator_specs)}."})
+            )
         else:
             print(f"  {RED}Need at least 2 gladiators. Use -g or --mock.{RST}\n")
         sys.exit(1)
@@ -1009,6 +1122,7 @@ def cmd_debate(args: argparse.Namespace) -> None:
         # Assign persona if provided
         if i < len(persona_specs) and persona_specs[i] != "none":
             from colosseum.personas.loader import PersonaLoader
+
             loader = PersonaLoader()
             content = loader.load_persona(persona_specs[i])
             if content:
@@ -1032,15 +1146,21 @@ def cmd_debate(args: argparse.Namespace) -> None:
 
     if not json_output:
         print(f"  {BOLD}Topic:{RST} {topic}")
-        print(f"  {BOLD}Depth:{RST} {depth} ({depth_label})  {DIM}max {depth} rounds, {token_budget} token budget{RST}")
+        print(
+            f"  {BOLD}Depth:{RST} {depth} ({depth_label})  {DIM}max {depth} rounds, {token_budget} token budget{RST}"
+        )
         print(f"  {BOLD}Gladiators:{RST}")
         for a in agents:
             persona_tag = f" [{a.get('persona_id', '')}]" if a.get("persona_id") else ""
             tier_tag = ""
-            m = _MODEL_MAP.get(f"{a['provider']['type'].replace('_cli', '')}:{a['provider']['model']}")
+            m = _MODEL_MAP.get(
+                f"{a['provider']['type'].replace('_cli', '')}:{a['provider']['model']}"
+            )
             if not m:
                 ptype = a["provider"]["type"]
-                tier_tag = f" {DIM}(free){RST}" if ptype in ("mock", "ollama", "huggingface_local") else ""
+                tier_tag = (
+                    f" {DIM}(free){RST}" if ptype in ("mock", "ollama", "huggingface_local") else ""
+                )
             else:
                 tier_tag = f" {DIM}({'free' if m['tier'] == 'free' else 'subscription'}){RST}"
             print(f"    {GOLD}{a['display_name']}{RST}{DIM}{persona_tag}{RST}{tier_tag}")
@@ -1055,12 +1175,14 @@ def cmd_debate(args: argparse.Namespace) -> None:
             problem_statement=topic,
             task_type=TaskType.RESEARCH_DESIGN,
         ),
-        context_sources=[ContextSourceInput(
-            source_id="topic",
-            kind=ContextSourceKind.INLINE_TEXT,
-            label="Debate topic",
-            content=topic,
-        )],
+        context_sources=[
+            ContextSourceInput(
+                source_id="topic",
+                kind=ContextSourceKind.INLINE_TEXT,
+                label="Debate topic",
+                content=topic,
+            )
+        ],
         agents=agents,
         judge=JudgeConfig(
             mode=JudgeMode.AUTOMATED,
@@ -1083,6 +1205,7 @@ def cmd_debate(args: argparse.Namespace) -> None:
     if json_output:
         # Silent mode: run and output JSON
         import json as _json
+
         run = asyncio.run(_run_debate_live(orch, request, silent=True))
         if not run:
             print(_json.dumps({"error": "Battle failed."}))
@@ -1091,7 +1214,9 @@ def cmd_debate(args: argparse.Namespace) -> None:
             "run_id": run.run_id,
             "status": run.status.value,
             "topic": run.task.title,
-            "agents": [{"agent_id": a.agent_id, "display_name": a.display_name} for a in run.agents],
+            "agents": [
+                {"agent_id": a.agent_id, "display_name": a.display_name} for a in run.agents
+            ],
             "plans": [
                 {
                     "plan_id": p.plan_id,
@@ -1110,13 +1235,7 @@ def cmd_debate(args: argparse.Namespace) -> None:
             "total_tokens": run.budget_ledger.total.total_tokens,
         }
         if run.verdict:
-            result["verdict"] = {
-                "type": run.verdict.verdict_type.value,
-                "winning_plan_ids": run.verdict.winning_plan_ids,
-                "rationale": run.verdict.rationale,
-                "confidence": run.verdict.confidence,
-                "stop_reason": run.verdict.stop_reason,
-            }
+            result["verdict"] = _verdict_json_payload(run.verdict)
         print(_json.dumps(result, indent=2))
         return
 
@@ -1129,6 +1248,7 @@ def cmd_debate(args: argparse.Namespace) -> None:
         # We need to pre-create the run to know the run_id for the monitor.
         # Create a temporary ExperimentRun to get the ID, then pass it through.
         from colosseum.core.models import ExperimentRun as _ER
+
         _preview_run = _ER(
             project_name=request.project_name,
             encourage_internet_search=request.encourage_internet_search,
@@ -1179,28 +1299,34 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
 
     # Initialize event bus for monitor
     bus = DebateEventBus(run.run_id)
-    bus.emit("debate_start", {
-        "topic": run.task.title,
-        "token_budget": run.budget_policy.total_token_budget,
-        "max_rounds": run.budget_policy.max_rounds,
-        "agents": [
-            {"agent_id": a.agent_id, "display_name": a.display_name}
-            for a in run.agents
-        ],
-    })
+    bus.emit(
+        "debate_start",
+        {
+            "topic": run.task.title,
+            "token_budget": run.budget_policy.total_token_budget,
+            "max_rounds": run.budget_policy.max_rounds,
+            "agents": [
+                {"agent_id": a.agent_id, "display_name": a.display_name} for a in run.agents
+            ],
+        },
+    )
 
     try:
         # Phase: context
         if not silent:
             _phase("Freezing context...")
-        bus.emit("phase", {"phase": "context", "message": "Freezing context...", "status": "planning"})
+        bus.emit(
+            "phase", {"phase": "context", "message": "Freezing context...", "status": "planning"}
+        )
         run.context_bundle = orch.context_service.freeze(request.context_sources)
         orch.repository.save_run(run)
 
         # Phase: planning
         if not silent:
             _phase("Generating plans...")
-        bus.emit("phase", {"phase": "planning", "message": "Generating plans...", "status": "planning"})
+        bus.emit(
+            "phase", {"phase": "planning", "message": "Generating plans...", "status": "planning"}
+        )
         run.status = RunStatus.PLANNING
         async for event_type, event_data in orch._generate_plans_streaming(run):
             bus.emit(event_type, event_data)
@@ -1238,16 +1364,21 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
             decision = await orch.judge_service.decide(run)
             run.judge_trace.append(decision)
 
-            bus.emit("judge_decision", {
-                "action": decision.action.value,
-                "confidence": decision.confidence,
-                "disagreement_level": decision.disagreement_level,
-                "focus": ", ".join(decision.focus_areas[:3]) if decision.focus_areas else "",
-                "next_round_type": decision.next_round_type.value if decision.next_round_type else "",
-                "reasoning": decision.reasoning[:120],
-                "agenda_title": decision.agenda.title if decision.agenda else "",
-                "agenda_question": decision.agenda.question if decision.agenda else "",
-            })
+            bus.emit(
+                "judge_decision",
+                {
+                    "action": decision.action.value,
+                    "confidence": decision.confidence,
+                    "disagreement_level": decision.disagreement_level,
+                    "focus": ", ".join(decision.focus_areas[:3]) if decision.focus_areas else "",
+                    "next_round_type": decision.next_round_type.value
+                    if decision.next_round_type
+                    else "",
+                    "reasoning": decision.reasoning[:120],
+                    "agenda_title": decision.agenda.title if decision.agenda else "",
+                    "agenda_question": decision.agenda.question if decision.agenda else "",
+                },
+            )
 
             if not silent:
                 _judge_decision(decision, len(run.debate_rounds), run.budget_policy.max_rounds)
@@ -1265,11 +1396,21 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
             if not silent:
                 _phase(f"Round {round_idx}: {round_type.value}")
 
-            bus.emit("debate_round_start", {
-                "round_index": round_idx,
-                "round_type": round_type.value,
-            })
-            bus.emit("phase", {"phase": "debate", "message": f"Round {round_idx}: {round_type.value}", "status": "debating"})
+            bus.emit(
+                "debate_round_start",
+                {
+                    "round_index": round_idx,
+                    "round_type": round_type.value,
+                },
+            )
+            bus.emit(
+                "phase",
+                {
+                    "phase": "debate",
+                    "message": f"Round {round_idx}: {round_type.value}",
+                    "status": "debating",
+                },
+            )
 
             run.status = RunStatus.DEBATING
             debate_round = None
@@ -1279,24 +1420,35 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
                 agenda=decision.agenda,
                 instructions="Focus on the current judge agenda only.",
             ):
-                bus.emit(event_type, event_data if isinstance(event_data, dict) else {
-                    "round_index": getattr(event_data, "index", 0),
-                    "round_type": getattr(event_data, "round_type", ""),
-                })
+                bus.emit(
+                    event_type,
+                    event_data
+                    if isinstance(event_data, dict)
+                    else {
+                        "round_index": getattr(event_data, "index", 0),
+                        "round_type": getattr(event_data, "round_type", ""),
+                    },
+                )
                 if not silent:
                     if event_type == "agent_thinking":
-                        _agent_status(event_data["display_name"], f"thinking... (Round {event_data['round_index']})")
+                        _agent_status(
+                            event_data["display_name"],
+                            f"thinking... (Round {event_data['round_index']})",
+                        )
                     elif event_type == "agent_message":
                         _agent_message(event_data)
                 if event_type == "round_complete":
                     assert isinstance(event_data, DebateRound)
                     debate_round = event_data
-                    bus.emit("round_complete", {
-                        "round_index": debate_round.index,
-                        "round_type": debate_round.round_type.value,
-                        "messages": len(debate_round.messages),
-                        "tokens": debate_round.usage.total_tokens,
-                    })
+                    bus.emit(
+                        "round_complete",
+                        {
+                            "round_index": debate_round.index,
+                            "round_type": debate_round.round_type.value,
+                            "messages": len(debate_round.messages),
+                            "tokens": debate_round.usage.total_tokens,
+                        },
+                    )
 
             if debate_round is not None:
                 debate_round.adjudication = orch.judge_service.adjudicate_round(run, debate_round)
@@ -1304,9 +1456,12 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
                 if not silent:
                     _round_summary(debate_round)
 
-            bus.emit("budget_update", {
-                "total_tokens": run.budget_ledger.total.total_tokens,
-            })
+            bus.emit(
+                "budget_update",
+                {
+                    "total_tokens": run.budget_ledger.total.total_tokens,
+                },
+            )
 
             run.updated_at = datetime.now(timezone.utc)
             orch.repository.save_run(run)
@@ -1314,7 +1469,10 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
         # Phase: verdict
         if not silent:
             _phase("Rendering final verdict...")
-        bus.emit("phase", {"phase": "verdict", "message": "Rendering final verdict...", "status": "debating"})
+        bus.emit(
+            "phase",
+            {"phase": "verdict", "message": "Rendering final verdict...", "status": "debating"},
+        )
         last_decision = run.judge_trace[-1] if run.judge_trace else None
         run.verdict = await orch.judge_service.finalize(run, last_decision)
         run.final_report = await orch.report_synthesizer.synthesize(run)
@@ -1325,15 +1483,18 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
 
         # Emit verdict event
         winner_names = []
-        for wid in (run.verdict.winning_plan_ids if run.verdict else []):
+        for wid in run.verdict.winning_plan_ids if run.verdict else []:
             plan = next((p for p in run.plans if p.plan_id == wid), None)
             winner_names.append(plan.display_name if plan else wid[:8])
-        bus.emit("verdict", {
-            "verdict_type": run.verdict.verdict_type.value if run.verdict else "none",
-            "winners": winner_names,
-            "confidence": run.verdict.confidence if run.verdict else 0,
-            "stop_reason": run.stop_reason or "",
-        })
+        bus.emit(
+            "verdict",
+            {
+                "verdict_type": run.verdict.verdict_type.value if run.verdict else "none",
+                "winners": winner_names,
+                "confidence": run.verdict.confidence if run.verdict else 0,
+                "stop_reason": run.stop_reason or "",
+            },
+        )
         bus.emit("phase", {"phase": "complete", "status": "completed"})
 
         if not silent:
@@ -1343,7 +1504,11 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
     except Exception as exc:
         error_msg = str(exc) or type(exc).__name__
         if isinstance(exc, (TimeoutError, asyncio.TimeoutError)):
-            error_msg = f"Provider timed out: {error_msg}" if str(exc) else "Provider timed out. Try increasing depth or using faster models."
+            error_msg = (
+                f"Provider timed out: {error_msg}"
+                if str(exc)
+                else "Provider timed out. Try increasing depth or using faster models."
+            )
         if not silent:
             print(f"\n  {RED}Error: {error_msg}{RST}\n")
         bus.emit("error", {"message": error_msg})
@@ -1354,6 +1519,7 @@ async def _run_debate_live(orch, request, silent: bool = False) -> ExperimentRun
 
 
 # ── Terminal rendering helpers ───────────────────────────────────
+
 
 def _phase(msg: str):
     print(f"  {GOLD}{BOLD}>> {msg}{RST}")
@@ -1392,8 +1558,10 @@ def _judge_decision(decision, rounds_done: int, max_rounds: int):
         color = BLUE
         label = action.upper()
 
-    print(f"\n  {GOLD}[Judge]{RST} {color}{BOLD}{label}{RST}  "
-          f"{DIM}({rounds_done}/{max_rounds} rounds, conf={decision.confidence:.2f}){RST}")
+    print(
+        f"\n  {GOLD}[Judge]{RST} {color}{BOLD}{label}{RST}  "
+        f"{DIM}({rounds_done}/{max_rounds} rounds, conf={decision.confidence:.2f}){RST}"
+    )
     print(_wrap(decision.reasoning, indent=4))
 
 
@@ -1429,6 +1597,22 @@ def _round_summary(dr):
         print(_wrap(dr.summary.moderator_note, indent=4))
 
 
+def _verdict_json_payload(verdict) -> dict[str, object]:
+    """Serialize verdict details for machine-readable CLI output."""
+    payload: dict[str, object] = {
+        "type": verdict.verdict_type.value,
+        "winning_plan_ids": verdict.winning_plan_ids,
+        "rationale": verdict.rationale,
+        "selected_strengths": verdict.selected_strengths,
+        "rejected_risks": verdict.rejected_risks,
+        "confidence": verdict.confidence,
+        "stop_reason": verdict.stop_reason,
+    }
+    if verdict.synthesized_plan:
+        payload["synthesized_plan"] = {"summary": verdict.synthesized_plan.summary}
+    return payload
+
+
 def _verdict(run):
     v = run.verdict
     if not v:
@@ -1437,7 +1621,7 @@ def _verdict(run):
 
     print(f"\n  {'=' * 60}")
     vtype = v.verdict_type.upper()
-    color = MAGENTA if v.verdict_type == "merged" else GOLD
+    color = MAGENTA if v.verdict_type.value == "merged" else GOLD
 
     # Find winner names
     winner_names = []
@@ -1472,6 +1656,7 @@ def _verdict(run):
 
 
 # ── Argument parser ──────────────────────────────────────────────
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -1510,17 +1695,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_show.add_argument("run_id", help="Run ID (or prefix)")
 
     # setup
-    p_setup = sub.add_parser("setup", help="Install CLI tools and authenticate (interactive wizard)")
+    p_setup = sub.add_parser(
+        "setup", help="Install CLI tools and authenticate (interactive wizard)"
+    )
     p_setup.add_argument(
-        "tools", nargs="*", default=None,
+        "tools",
+        nargs="*",
+        default=None,
         help="Specific tools to set up (e.g. claude codex gemini ollama). Defaults to all.",
     )
     p_setup.add_argument(
-        "--skip-auth", action="store_true", default=False,
+        "--skip-auth",
+        action="store_true",
+        default=False,
         help="Skip authentication step (install only)",
     )
     p_setup.add_argument(
-        "-y", "--yes", action="store_true", default=False,
+        "-y",
+        "--yes",
+        action="store_true",
+        default=False,
         help="Auto-confirm all install/auth prompts",
     )
 
@@ -1535,34 +1729,54 @@ def build_parser() -> argparse.ArgumentParser:
     p_debate = sub.add_parser("debate", help="Run a debate from the terminal")
     p_debate.add_argument("-t", "--topic", required=True, help="Debate topic")
     p_debate.add_argument(
-        "-g", "--gladiators", action="extend", nargs="+", default=None,
+        "-g",
+        "--gladiators",
+        action="extend",
+        nargs="+",
+        default=None,
         help="Gladiator specs: provider:model (e.g. -g claude:claude-sonnet-4-6 ollama:llama3.3 or -g mock:a -g mock:b)",
     )
     p_debate.add_argument(
-        "-d", "--depth", type=int, default=3, choices=[1, 2, 3, 4, 5],
+        "-d",
+        "--depth",
+        type=int,
+        default=3,
+        choices=[1, 2, 3, 4, 5],
         help="Debate depth 1=Quick 2=Brief 3=Standard 4=Thorough 5=Deep (default: 3)",
     )
     p_debate.add_argument(
-        "-p", "--personas", nargs="+", default=None,
+        "-p",
+        "--personas",
+        nargs="+",
+        default=None,
         help="Persona IDs for each gladiator (use 'none' to skip). Order matches -g order.",
     )
     p_debate.add_argument(
-        "--mock", action="store_true", default=False,
+        "--mock",
+        action="store_true",
+        default=False,
         help="Quick test mode: use 2 mock gladiators (overrides -g)",
     )
     p_debate.add_argument(
-        "--json", dest="json_output", action="store_true", default=False,
+        "--json",
+        dest="json_output",
+        action="store_true",
+        default=False,
         help="Output result as JSON instead of formatted text",
     )
     p_debate.add_argument(
-        "--monitor", action="store_true", default=False,
+        "--monitor",
+        action="store_true",
+        default=False,
         help="Open a live monitor in a tmux side pane (requires tmux)",
     )
 
     # monitor
     p_monitor = sub.add_parser("monitor", help="Open live monitor dashboard for an active debate")
     p_monitor.add_argument(
-        "run_id", nargs="?", default=None,
+        "run_id",
+        nargs="?",
+        default=None,
         help="Run ID to monitor (default: latest active run)",
     )
 

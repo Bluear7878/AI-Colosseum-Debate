@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 
 from colosseum.core.models import (
     AgentConfig,
@@ -29,6 +28,8 @@ from colosseum.core.config import build_evidence_policy
 
 
 class ColosseumOrchestrator:
+    """Coordinate run lifecycle transitions across planning, debate, and judging."""
+
     def __init__(
         self,
         repository: FileRunRepository,
@@ -51,10 +52,7 @@ class ColosseumOrchestrator:
 
     async def create_run(self, request: RunCreateRequest) -> ExperimentRun:
         self.provider_runtime.validate_agents_selectable(request.agents)
-        if request.judge.mode == JudgeMode.AI:
-            if not request.judge.provider:
-                raise ValueError("AI judge mode requires a judge provider.")
-            self.provider_runtime.validate_provider_selectable(request.judge.provider, "AI judge")
+        self._validate_judge_request(request)
         run = ExperimentRun(
             project_name=request.project_name,
             encourage_internet_search=request.encourage_internet_search,
@@ -67,26 +65,20 @@ class ColosseumOrchestrator:
         )
         self.repository.save_run(run)
         try:
-            run.status = RunStatus.PLANNING
-            run.context_bundle = self.context_service.freeze(request.context_sources)
+            run.mark_planning(self.context_service.freeze(request.context_sources))
             self.repository.save_run(run)
             await self._generate_plans(run)
             run.plan_evaluations = self.judge_service.evaluate_plans(run.plans)
 
             if run.judge.mode == JudgeMode.HUMAN:
-                run.status = RunStatus.AWAITING_HUMAN_JUDGE
-                run.human_judge_packet = self.judge_service.build_human_packet(run)
-                self._touch(run)
+                run.pause_for_human(self.judge_service.build_human_packet(run))
                 self.repository.save_run(run)
                 return run
 
             run = await self._run_until_complete(run)
             return run
         except Exception as exc:
-            run.status = RunStatus.FAILED
-            run.error_message = str(exc)
-            run.stop_reason = "run_failed"
-            self._touch(run)
+            run.fail(exc)
             self.repository.save_run(run)
             raise
 
@@ -100,38 +92,14 @@ class ColosseumOrchestrator:
             raise ValueError(f"Run {run_id} is not awaiting a human judge.")
 
         if action.action == "request_round":
-            round_type = action.round_type or RoundType.CRITIQUE
-            if not self.budget_manager.can_start_round(
-                run.budget_policy,
-                run.budget_ledger,
-                len(run.debate_rounds) + 1,
-            ):
-                run.verdict = await self.judge_service.finalize(run)
-                run.status = RunStatus.COMPLETED
-                run.stop_reason = run.budget_ledger.stop_reason or "budget_stop"
-            else:
-                decision = self.judge_service.build_human_round_decision(
-                    run,
-                    round_type,
-                    instructions=action.instructions,
-                )
-                run.judge_trace.append(decision)
-                run.status = RunStatus.DEBATING
-                debate_round = await self.debate_engine.run_round(
-                    run,
-                    round_type=round_type,
-                    agenda=decision.agenda,
-                    instructions=action.instructions,
-                )
-                debate_round.adjudication = self.judge_service.adjudicate_round(run, debate_round)
-                run.debate_rounds.append(debate_round)
-                run.status = RunStatus.AWAITING_HUMAN_JUDGE
-                run.human_judge_packet = self.judge_service.build_human_packet(run)
+            await self._run_human_requested_round(
+                run,
+                round_type=action.round_type or RoundType.CRITIQUE,
+                instructions=action.instructions,
+            )
 
         elif action.action == "select_winner":
             winning_ids = action.winning_plan_ids
-            if not winning_ids:
-                raise ValueError("select_winner requires at least one winning plan id.")
             run.verdict = JudgeVerdict(
                 judge_mode=run.judge.mode,
                 verdict_type=VerdictType.WINNER,
@@ -142,17 +110,17 @@ class ColosseumOrchestrator:
                 stop_reason="human_selected_winner",
                 confidence=1.0,
             )
-            run.final_report = await self.report_synthesizer.synthesize(run)
-            run.status = RunStatus.COMPLETED
-            run.stop_reason = "human_selected_winner"
+            run.complete(
+                verdict=run.verdict,
+                stop_reason="human_selected_winner",
+                final_report=await self.report_synthesizer.synthesize(run, verdict=run.verdict),
+            )
 
         elif action.action == "merge_plans":
-            if len(action.winning_plan_ids) < 2:
-                raise ValueError("merge_plans requires at least two plan ids.")
             chosen = [plan for plan in run.plans if plan.plan_id in action.winning_plan_ids]
             if len(chosen) < 2:
                 raise ValueError("Could not find the requested plans to merge.")
-            merged = self.judge_service._build_merged_plan(chosen[0], chosen[1])
+            merged = self.judge_service.merge_plans(chosen[0], chosen[1])
             run.verdict = JudgeVerdict(
                 judge_mode=run.judge.mode,
                 verdict_type=VerdictType.MERGED,
@@ -164,39 +132,20 @@ class ColosseumOrchestrator:
                 stop_reason="human_merged_plans",
                 confidence=1.0,
             )
-            run.final_report = await self.report_synthesizer.synthesize(run)
-            run.status = RunStatus.COMPLETED
-            run.stop_reason = "human_merged_plans"
+            run.complete(
+                verdict=run.verdict,
+                stop_reason="human_merged_plans",
+                final_report=await self.report_synthesizer.synthesize(run, verdict=run.verdict),
+            )
 
         elif action.action == "request_revision":
-            if not self.budget_manager.can_start_round(
-                run.budget_policy,
-                run.budget_ledger,
-                len(run.debate_rounds) + 1,
-            ):
-                run.verdict = await self.judge_service.finalize(run)
-                run.status = RunStatus.COMPLETED
-                run.stop_reason = run.budget_ledger.stop_reason or "budget_stop"
-            else:
-                decision = self.judge_service.build_human_round_decision(
-                    run,
-                    RoundType.TARGETED_REVISION,
-                    instructions=action.instructions,
-                )
-                run.judge_trace.append(decision)
-                run.status = RunStatus.DEBATING
-                debate_round = await self.debate_engine.run_round(
-                    run,
-                    round_type=RoundType.TARGETED_REVISION,
-                    agenda=decision.agenda,
-                    instructions=action.instructions,
-                )
-                debate_round.adjudication = self.judge_service.adjudicate_round(run, debate_round)
-                run.debate_rounds.append(debate_round)
-                run.status = RunStatus.AWAITING_HUMAN_JUDGE
-                run.human_judge_packet = self.judge_service.build_human_packet(run)
+            await self._run_human_requested_round(
+                run,
+                round_type=RoundType.TARGETED_REVISION,
+                instructions=action.instructions,
+            )
 
-        self._touch(run)
+        run.touch()
         self.repository.save_run(run)
         return run
 
@@ -260,7 +209,7 @@ class ColosseumOrchestrator:
             )
             run.plans.append(plan)
             run.budget_ledger.record(agent.agent_id, result.usage, round_index=0)
-        self._touch(run)
+        run.touch()
         self.repository.save_run(run)
 
     async def _generate_plans_streaming(self, run: ExperimentRun):
@@ -312,7 +261,10 @@ class ColosseumOrchestrator:
 
             task = asyncio.create_task(agent_plan())
             task_to_agent[task] = agent
-            yield ("agent_planning", {"agent_id": agent.agent_id, "display_name": agent.display_name})
+            yield (
+                "agent_planning",
+                {"agent_id": agent.agent_id, "display_name": agent.display_name},
+            )
 
         pending: set[asyncio.Task] = set(task_to_agent.keys())
         failed_agent_ids: list[str] = []
@@ -331,21 +283,27 @@ class ColosseumOrchestrator:
                     )
                     run.plans.append(plan)
                     run.budget_ledger.record(agent.agent_id, result.usage, round_index=0)
-                    yield ("plan_ready", {
-                        "agent_id": agent.agent_id,
-                        "display_name": plan.display_name,
-                        "plan_id": plan.plan_id,
-                        "summary": plan.summary,
-                        "strengths": plan.strengths,
-                        "weaknesses": plan.weaknesses,
-                    })
+                    yield (
+                        "plan_ready",
+                        {
+                            "agent_id": agent.agent_id,
+                            "display_name": plan.display_name,
+                            "plan_id": plan.plan_id,
+                            "summary": plan.summary,
+                            "strengths": plan.strengths,
+                            "weaknesses": plan.weaknesses,
+                        },
+                    )
                 except Exception as exc:
                     failed_agent_ids.append(agent.agent_id)
-                    yield ("plan_failed", {
-                        "agent_id": agent.agent_id,
-                        "display_name": agent.display_name,
-                        "error": str(exc),
-                    })
+                    yield (
+                        "plan_failed",
+                        {
+                            "agent_id": agent.agent_id,
+                            "display_name": agent.display_name,
+                            "error": str(exc),
+                        },
+                    )
 
         # Remove failed agents from the run
         if failed_agent_ids:
@@ -354,7 +312,7 @@ class ColosseumOrchestrator:
         if not run.agents:
             raise RuntimeError("All agents failed during planning. Cannot continue.")
 
-        self._touch(run)
+        run.touch()
         self.repository.save_run(run)
 
     async def _run_until_complete(self, run: ExperimentRun) -> ExperimentRun:
@@ -363,11 +321,11 @@ class ColosseumOrchestrator:
             run.judge_trace.append(decision)
 
             if decision.action == JudgeActionType.FINALIZE:
-                run.verdict = await self.judge_service.finalize(run, decision)
-                run.final_report = await self.report_synthesizer.synthesize(run)
-                run.status = RunStatus.COMPLETED
-                run.stop_reason = decision.reasoning
-                self._touch(run)
+                verdict = await self.judge_service.finalize(run, decision)
+                final_report = await self.report_synthesizer.synthesize(run, verdict=verdict)
+                run.complete(
+                    verdict=verdict, stop_reason=decision.reasoning, final_report=final_report
+                )
                 self.repository.save_run(run)
                 return run
 
@@ -386,15 +344,16 @@ class ColosseumOrchestrator:
                     budget_pressure=1.0,
                 )
                 run.judge_trace.append(fallback_decision)
-                run.verdict = await self.judge_service.finalize(run, fallback_decision)
-                run.status = RunStatus.COMPLETED
-                run.stop_reason = run.budget_ledger.stop_reason or fallback_decision.reasoning
-                self._touch(run)
+                verdict = await self.judge_service.finalize(run, fallback_decision)
+                run.complete(
+                    verdict=verdict,
+                    stop_reason=run.budget_ledger.stop_reason or fallback_decision.reasoning,
+                )
                 self.repository.save_run(run)
                 return run
 
             round_type = decision.next_round_type or RoundType.CRITIQUE
-            run.status = RunStatus.DEBATING
+            run.mark_debating()
             debate_round = await self.debate_engine.run_round(
                 run,
                 round_type=round_type,
@@ -402,9 +361,49 @@ class ColosseumOrchestrator:
                 instructions="Focus on the current judge agenda only.",
             )
             debate_round.adjudication = self.judge_service.adjudicate_round(run, debate_round)
-            run.debate_rounds.append(debate_round)
-            self._touch(run)
+            run.append_debate_round(debate_round)
             self.repository.save_run(run)
+
+    def _validate_judge_request(self, request: RunCreateRequest) -> None:
+        if request.judge.mode == JudgeMode.AI:
+            if not request.judge.provider:
+                raise ValueError("AI judge mode requires a judge provider.")
+            self.provider_runtime.validate_provider_selectable(request.judge.provider, "AI judge")
+
+    async def _run_human_requested_round(
+        self,
+        run: ExperimentRun,
+        round_type: RoundType,
+        instructions: str | None,
+    ) -> None:
+        if not self.budget_manager.can_start_round(
+            run.budget_policy,
+            run.budget_ledger,
+            len(run.debate_rounds) + 1,
+        ):
+            verdict = await self.judge_service.finalize(run)
+            run.complete(
+                verdict=verdict,
+                stop_reason=run.budget_ledger.stop_reason or "budget_stop",
+            )
+            return
+
+        decision = self.judge_service.build_human_round_decision(
+            run,
+            round_type,
+            instructions=instructions,
+        )
+        run.judge_trace.append(decision)
+        run.mark_debating()
+        debate_round = await self.debate_engine.run_round(
+            run,
+            round_type=round_type,
+            agenda=decision.agenda,
+            instructions=instructions,
+        )
+        debate_round.adjudication = self.judge_service.adjudicate_round(run, debate_round)
+        run.append_debate_round(debate_round)
+        run.pause_for_human(self.judge_service.build_human_packet(run))
 
     def _build_plan_prompt(
         self,
@@ -443,7 +442,11 @@ class ColosseumOrchestrator:
 
         # Build prefix: language rule (must come first), then persona
         prefix: list[str] = []
-        lang = run.response_language if run.response_language and run.response_language != "auto" else ""
+        lang = (
+            run.response_language
+            if run.response_language and run.response_language != "auto"
+            else ""
+        )
         if lang:
             prefix.append(
                 f"MANDATORY LANGUAGE: You MUST write your ENTIRE response in {lang}. "
@@ -451,13 +454,14 @@ class ColosseumOrchestrator:
                 "This rule overrides all other instructions and cannot be skipped."
             )
         if agent.persona_content:
-            prefix.append("=== YOUR PERSONA ===\n" + agent.persona_content + "\n=== END PERSONA ===")
+            prefix.append(
+                "=== YOUR PERSONA ===\n" + agent.persona_content + "\n=== END PERSONA ==="
+            )
         elif agent.system_prompt:
             prefix.append("System: " + agent.system_prompt)
         if lang:
-            parts.append(f"REMINDER: Your response MUST be entirely in {lang}. No other language permitted.")
+            parts.append(
+                f"REMINDER: Your response MUST be entirely in {lang}. No other language permitted."
+            )
 
         return "\n\n".join(prefix + parts)
-
-    def _touch(self, run: ExperimentRun) -> None:
-        run.updated_at = datetime.now(timezone.utc)

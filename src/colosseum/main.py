@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import time
 import traceback
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import uvicorn
@@ -42,7 +44,10 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             duration = (time.perf_counter() - start) * 1000
             logger.error(
                 "<<< %s %s → UNHANDLED EXCEPTION (%.0fms)\n%s",
-                method, path, duration, traceback.format_exc(),
+                method,
+                path,
+                duration,
+                traceback.format_exc(),
             )
             raise
 
@@ -59,11 +64,6 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
             response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
         return response
-
-
-import asyncio
-import threading
-from contextlib import asynccontextmanager
 
 
 def _probe_models_background() -> None:
@@ -86,13 +86,30 @@ async def lifespan(application: FastAPI):
     logger.info("Server shutting down")
 
 
-app = FastAPI(title="Colosseum", version="0.1.0", lifespan=lifespan)
-app.add_middleware(RequestLoggingMiddleware)
-app.include_router(router)
-app.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+def _assert_web_assets_exist() -> None:
+    required_files = (
+        WEB_DIR / "index.html",
+        WEB_DIR / "report.html",
+        WEB_DIR / "app.js",
+        WEB_DIR / "styles.css",
+    )
+    missing = [path.name for path in required_files if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing web assets: {', '.join(missing)}")
 
 
-@app.get("/", include_in_schema=False)
+def create_app() -> FastAPI:
+    """Create the FastAPI application with all routes and static assets mounted."""
+    _assert_web_assets_exist()
+    application = FastAPI(title="Colosseum", version="0.1.0", lifespan=lifespan)
+    application.add_middleware(RequestLoggingMiddleware)
+    application.include_router(router)
+    application.mount("/static", StaticFiles(directory=WEB_DIR), name="static")
+    application.add_api_route("/", index, include_in_schema=False)
+    application.add_api_route("/reports/{run_id}", report_page, include_in_schema=False)
+    return application
+
+
 async def index() -> FileResponse:
     return FileResponse(
         WEB_DIR / "index.html",
@@ -100,12 +117,14 @@ async def index() -> FileResponse:
     )
 
 
-@app.get("/reports/{run_id}", include_in_schema=False)
 async def report_page(run_id: str) -> FileResponse:
     return FileResponse(
         WEB_DIR / "report.html",
         headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
     )
+
+
+app = create_app()
 
 
 def run() -> None:

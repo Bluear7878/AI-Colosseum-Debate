@@ -5,6 +5,7 @@ This script bridges Colosseum's JSON protocol with CLI-based AI tools.
 It reads the input from COLOSSEUM_INPUT_PATH, calls the appropriate CLI,
 and outputs structured JSON to stdout.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -49,7 +50,9 @@ def build_prompt(data: dict) -> str:
 
     # Surface task title prominently so the model cannot ignore the topic
     task_title = metadata.get("task_title", "")
-    task_preamble = f"=== DEBATE TOPIC ===\n{task_title}\n=== END TOPIC ===\n\n" if task_title else ""
+    task_preamble = (
+        f"=== DEBATE TOPIC ===\n{task_title}\n=== END TOPIC ===\n\n" if task_title else ""
+    )
 
     # Enforce response language as the very first instruction
     response_language = metadata.get("response_language", "")
@@ -66,7 +69,9 @@ def build_prompt(data: dict) -> str:
 
     if operation == "plan":
         prompt += "summary, evidence_basis (list), assumptions (list), architecture (list), implementation_strategy (list), "
-        prompt += "risks (list of {title, severity, mitigation}), strengths (list), weaknesses (list), "
+        prompt += (
+            "risks (list of {title, severity, mitigation}), strengths (list), weaknesses (list), "
+        )
         prompt += "trade_offs (list), open_questions (list)"
         prompt += "\n\nIMPORTANT: Every field must be strictly relevant to the debate topic above. "
         prompt += "Do not include generic content or examples unrelated to this specific task."
@@ -76,7 +81,9 @@ def build_prompt(data: dict) -> str:
         prompt += "concessions (list), hybrid_suggestions (list), referenced_plan_ids (list)"
         prompt += "\n\nIMPORTANT: You are in a structured evidence-first debate. "
         prompt += "Every argument must be directly relevant to the debate topic. "
-        prompt += "Directly respond to other participants' specific arguments — reference them by name. "
+        prompt += (
+            "Directly respond to other participants' specific arguments — reference them by name. "
+        )
         prompt += "Rebut what you disagree with, concede well-supported points. "
         prompt += "Evidence quality matters more than rhetoric: cite the frozen context or state uncertainty. "
         prompt += "Do not introduce off-topic content or generic advice unrelated to this task."
@@ -88,7 +95,9 @@ def build_prompt(data: dict) -> str:
         prompt += "Only continue the debate if agents are producing new, topic-relevant evidence."
     elif operation in ("synthesis", "report_synthesis"):
         prompt += "summary, evidence_basis (list), assumptions (list), architecture (list), implementation_strategy (list), "
-        prompt += "risks (list of {title, severity, mitigation}), strengths (list), weaknesses (list), "
+        prompt += (
+            "risks (list of {title, severity, mitigation}), strengths (list), weaknesses (list), "
+        )
         prompt += "trade_offs (list), open_questions (list)"
         prompt += "\n\nIMPORTANT: The synthesis must be strictly focused on the debate topic. "
         prompt += "Select only the strongest evidence-backed ideas from the debate. "
@@ -166,12 +175,15 @@ def call_codex(prompt: str, model: str = "") -> str:
     agent logs with the actual response.
     """
     import tempfile
+
     fd, out_file = tempfile.mkstemp(suffix=".txt", prefix="codex_")
     os.close(fd)
     cmd = [
-        "codex", "exec",
+        "codex",
+        "exec",
         "--dangerously-bypass-approvals-and-sandbox",
-        "-o", out_file,
+        "-o",
+        out_file,
     ]
     if model:
         cmd.extend(["--model", model])
@@ -198,7 +210,7 @@ def call_codex(prompt: str, model: str = "") -> str:
 
     # Fallback: parse stdout (last non-empty line is usually the response)
     if result.stdout.strip():
-        lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
+        lines = [line for line in result.stdout.strip().splitlines() if line.strip()]
         if lines:
             return lines[-1].strip()
 
@@ -229,10 +241,12 @@ def call_gemini(prompt: str, model: str = "") -> str:
         # If still empty, return a structured error so it propagates clearly
         if not raw:
             combined_err = stderr or result2.stderr.strip()
-            return json.dumps({
-                "content": f"Gemini CLI returned empty output. stderr: {combined_err[:300]}",
-                "error": "empty_response",
-            })
+            return json.dumps(
+                {
+                    "content": f"Gemini CLI returned empty output. stderr: {combined_err[:300]}",
+                    "error": "empty_response",
+                }
+            )
 
     return raw
 
@@ -241,8 +255,7 @@ def call_ollama(prompt: str, model: str = "llama3.3") -> str:
     """Call Ollama: ollama run <model> <prompt>"""
     sp_timeout = get_subprocess_timeout()
     result = subprocess.run(
-        ["ollama", "run", model, prompt],
-        capture_output=True, text=True, timeout=sp_timeout
+        ["ollama", "run", model, prompt], capture_output=True, text=True, timeout=sp_timeout
     )
     return result.stdout.strip()
 
@@ -286,7 +299,9 @@ def parse_response(raw: str) -> dict:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--provider", required=True, choices=["claude", "codex", "gemini", "ollama", "huggingface"])
+    parser.add_argument(
+        "--provider", required=True, choices=["claude", "codex", "gemini", "ollama", "huggingface"]
+    )
     parser.add_argument("--model", default="", help="Model name to pass to the CLI tool")
     args = parser.parse_args()
 
@@ -307,16 +322,17 @@ def main():
         else:
             raw = '{"content": "Unsupported provider"}'
     except FileNotFoundError:
-        print(json.dumps({
-            "content": f"CLI tool '{args.provider}' not found. Please install it first.",
-            "error": f"{args.provider} command not found in PATH"
-        }))
+        print(
+            json.dumps(
+                {
+                    "content": f"CLI tool '{args.provider}' not found. Please install it first.",
+                    "error": f"{args.provider} command not found in PATH",
+                }
+            )
+        )
         sys.exit(0)
     except subprocess.TimeoutExpired:
-        print(json.dumps({
-            "content": f"CLI tool '{args.provider}' timed out.",
-            "error": "timeout"
-        }))
+        print(json.dumps({"content": f"CLI tool '{args.provider}' timed out.", "error": "timeout"}))
         sys.exit(0)
 
     parsed = parse_response(raw)

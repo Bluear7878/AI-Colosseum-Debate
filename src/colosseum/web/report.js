@@ -146,9 +146,13 @@ function renderDebateConclusion(run) {
   var headlineText = (fr && fr.one_line_verdict) || "";
   if (!headlineText && verdict) {
     var winnerName = winnerDisplayName(run);
-    headlineText = winnerName
-      ? winnerName + " wins — " + (verdict.rationale || "")
-      : (verdict.rationale || "");
+    if (winnerName && verdict.verdict_type === "merged") {
+      headlineText = "Merged recommendation from " + winnerName + " — " + (verdict.rationale || "");
+    } else if (winnerName) {
+      headlineText = winnerName + " wins — " + (verdict.rationale || "");
+    } else {
+      headlineText = verdict.rationale || "";
+    }
   }
   if (headlineText) {
     var headlineEl = document.getElementById("conclusion-headline");
@@ -171,12 +175,22 @@ function renderDebateConclusion(run) {
   renderAgentOpinions(run);
 }
 
-function winnerDisplayName(run) {
+function winnerDisplayNames(run) {
   var verdict = run.verdict;
-  if (!verdict || !verdict.winning_plan_ids || !verdict.winning_plan_ids.length) return "";
-  var wid = verdict.winning_plan_ids[0];
-  var match = (run.plans || []).find(function(p) { return p.plan_id === wid; });
-  return match ? match.display_name : wid.slice(0, 8);
+  if (!verdict || !verdict.winning_plan_ids || !verdict.winning_plan_ids.length) return [];
+  return verdict.winning_plan_ids.map(function(wid) {
+    var match = (run.plans || []).find(function(p) { return p.plan_id === wid; });
+    return match ? match.display_name : wid.slice(0, 8);
+  }).filter(Boolean);
+}
+
+function winnerDisplayName(run) {
+  var names = winnerDisplayNames(run);
+  if (!names.length) return "";
+  if (run.verdict && run.verdict.verdict_type === "merged") {
+    return names.join(" + ");
+  }
+  return names[0];
 }
 
 function renderVerdictBanner(run) {
@@ -186,10 +200,11 @@ function renderVerdictBanner(run) {
   var verdict = run.verdict;
   if (verdict) {
     var winnerName = winnerDisplayName(run);
+    var verdictLabel = winnerName || (verdict.verdict_type === "merged" ? "Merged recommendation" : "No winner");
     el.innerHTML =
       '<div class="report-verdict-banner">' +
         '<span class="verdict-type ' + esc(verdict.verdict_type || "winner") + '">' + esc((verdict.verdict_type || "winner").toUpperCase()) + '</span>' +
-        '<div class="report-verdict-main">' + esc(winnerName || "No winner") + '</div>' +
+        '<div class="report-verdict-main">' + esc(verdictLabel) + '</div>' +
         '<div class="report-verdict-sub">' + esc(verdict.rationale || "") + '</div>' +
         '<div class="report-verdict-meta">Confidence ' + fmt(verdict.confidence) + '</div>' +
       '</div>';

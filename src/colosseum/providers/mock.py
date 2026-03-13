@@ -149,7 +149,9 @@ class MockProvider(BaseProvider):
         agent_index = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
         style = self._pick_style_for_agent(agent_id, agent_index)
         task_title = metadata.get("task_title", "Untitled task")
-        context_summary = metadata.get("context_summary", "No external context summary was provided.")
+        context_summary = metadata.get(
+            "context_summary", "No external context summary was provided."
+        )
         image_inputs = metadata.get("image_inputs", [])
         visual_assumption = []
         if image_inputs:
@@ -161,8 +163,11 @@ class MockProvider(BaseProvider):
             "evidence_basis": [
                 f"Frozen context summary: {context_summary}",
                 "Provider outputs are compared under one shared Colosseum schema.",
-            ] + ([f"Shared image packet count: {len(image_inputs)}"] if image_inputs else []),
-            "assumptions": style["assumptions"] + [f"Context summary: {context_summary}"] + visual_assumption,
+            ]
+            + ([f"Shared image packet count: {len(image_inputs)}"] if image_inputs else []),
+            "assumptions": style["assumptions"]
+            + [f"Context summary: {context_summary}"]
+            + visual_assumption,
             "architecture": style["architecture"],
             "implementation_strategy": style["implementation"],
             "risks": [
@@ -213,7 +218,8 @@ class MockProvider(BaseProvider):
         if image_inputs:
             critique_text += " It also needs a clearer plan for validating image-grounded claims."
         return {
-            "content": round_prefix + (f" Judge question: {agenda_question}" if agenda_question else ""),
+            "content": round_prefix
+            + (f" Judge question: {agenda_question}" if agenda_question else ""),
             "critique_points": [
                 {
                     "category": "feasibility",
@@ -279,9 +285,7 @@ class MockProvider(BaseProvider):
                 "Balanced maintainability and budget control.",
                 f"Based on plans: {', '.join(basis_plan_ids) if basis_plan_ids else 'n/a'}.",
             ],
-            "weaknesses": [
-                "Some heuristics remain simplistic in the MVP."
-            ],
+            "weaknesses": ["Some heuristics remain simplistic in the MVP."],
             "trade_offs": [
                 "The MVP emphasizes traceability and control over advanced automation.",
             ],

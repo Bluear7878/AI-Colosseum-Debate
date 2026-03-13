@@ -137,7 +137,9 @@ class CommandProvider(BaseProvider):
         except json.JSONDecodeError:
             return {"content": raw, "json_payload": {}}
         if isinstance(payload, dict):
-            content = payload.get("content") if "content" in payload else json.dumps(payload, indent=2)
+            content = (
+                payload.get("content") if "content" in payload else json.dumps(payload, indent=2)
+            )
             return {"content": content, "json_payload": payload}
         return {"content": raw, "json_payload": {}}
 

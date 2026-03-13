@@ -28,6 +28,7 @@ from colosseum.core.models import (
     VerdictType,
 )
 from colosseum.services.budget import BudgetManager
+from colosseum.services.context_media import extract_image_inputs, summarize_image_inputs
 from colosseum.services.provider_runtime import ProviderRuntimeService
 
 
@@ -41,6 +42,8 @@ class JudgeService:
         self.provider_runtime = provider_runtime
 
     def evaluate_plans(self, plans: list[PlanDocument]) -> list[PlanEvaluation]:
+        if not plans:
+            return []
         evaluations: list[PlanEvaluation] = []
         for plan in plans:
             scores = {
@@ -72,7 +75,9 @@ class JudgeService:
             return await self._ai_decide(run)
         return self._automated_decide(run)
 
-    async def finalize(self, run: ExperimentRun, decision: JudgeDecision | None = None) -> JudgeVerdict:
+    async def finalize(
+        self, run: ExperimentRun, decision: JudgeDecision | None = None
+    ) -> JudgeVerdict:
         if run.judge.mode == JudgeMode.AI and run.judge.provider:
             verdict = await self._ai_finalize(run, decision)
             if verdict:
@@ -99,8 +104,12 @@ class JudgeService:
         return HumanJudgePacket(
             plan_cards=cards,
             last_round_summary=last_round,
-            key_disagreements=last_round.key_disagreements if last_round else self._initial_disagreements(run),
-            strongest_arguments=last_round.strongest_arguments if last_round else self._initial_strengths(run),
+            key_disagreements=last_round.key_disagreements
+            if last_round
+            else self._initial_disagreements(run),
+            strongest_arguments=last_round.strongest_arguments
+            if last_round
+            else self._initial_strengths(run),
             recommended_action=self._recommended_human_action(run),
             available_actions=[
                 "request_round",
@@ -120,14 +129,18 @@ class JudgeService:
         agenda = self._select_agenda(run, round_type, instructions=instructions)
         return JudgeDecision(
             mode=JudgeMode.HUMAN,
-            action=JudgeActionType.REQUEST_REVISION if round_type == RoundType.TARGETED_REVISION else JudgeActionType.CONTINUE_DEBATE,
+            action=JudgeActionType.REQUEST_REVISION
+            if round_type == RoundType.TARGETED_REVISION
+            else JudgeActionType.CONTINUE_DEBATE,
             reasoning="Human judge requested another bounded round on a specific issue.",
             confidence=1.0,
             disagreement_level=self._disagreement_level(run),
             expected_value_of_next_round=0.25,
             next_round_type=round_type,
             focus_areas=agenda.focus_areas,
-            budget_pressure=self.budget_manager.budget_pressure(run.budget_policy, run.budget_ledger),
+            budget_pressure=self.budget_manager.budget_pressure(
+                run.budget_policy, run.budget_ledger
+            ),
             agenda=agenda,
         )
 
@@ -173,8 +186,7 @@ class JudgeService:
         unresolved = debate_round.summary.unresolved_questions[:3]
         if adopted:
             adopted_labels = ", ".join(
-                f"{item.display_name} ({item.claim_kind})"
-                for item in adopted[:2]
+                f"{item.display_name} ({item.claim_kind})" for item in adopted[:2]
             )
             resolution = (
                 f"The judge resolved the round by adopting {adopted_labels} on the issue "
@@ -190,9 +202,7 @@ class JudgeService:
                 "No argument clearly cleared the evidence bar for this issue, so the judge should "
                 "keep the scope narrow if another round is requested."
             )
-            judge_note = (
-                "The round surfaced disagreement, but not enough objective support to endorse a single stance."
-            )
+            judge_note = "The round surfaced disagreement, but not enough objective support to endorse a single stance."
             moved_to_next_issue = False
 
         return RoundAdjudication(
@@ -248,7 +258,8 @@ class JudgeService:
                 disagreement_level=max(disagreement_level, 0.45),
                 expected_value_of_next_round=0.38,
                 next_round_type=next_round_type,
-                focus_areas=agenda.focus_areas or ["objective evidence", "explicit uncertainty", "source-backed trade-offs"],
+                focus_areas=agenda.focus_areas
+                or ["objective evidence", "explicit uncertainty", "source-backed trade-offs"],
                 budget_pressure=budget_pressure,
                 agenda=agenda,
             )
@@ -277,11 +288,15 @@ class JudgeService:
 
         if run.debate_rounds:
             latest_round = run.debate_rounds[-1]
-            average_novelty = mean(message.novelty_score for message in latest_round.messages) if latest_round.messages else 0.0
+            average_novelty = (
+                mean(message.novelty_score for message in latest_round.messages)
+                if latest_round.messages
+                else 0.0
+            )
             convergence = self._convergence_score(latest_round)
-            if (
-                len(run.debate_rounds) >= run.budget_policy.min_rounds
-                and (average_novelty < run.budget_policy.min_novelty_threshold or convergence >= run.budget_policy.convergence_threshold)
+            if len(run.debate_rounds) >= run.budget_policy.min_rounds and (
+                average_novelty < run.budget_policy.min_novelty_threshold
+                or convergence >= run.budget_policy.convergence_threshold
             ):
                 return JudgeDecision(
                     mode=JudgeMode.AUTOMATED,
@@ -362,21 +377,24 @@ class JudgeService:
         result = execution.result
         payload = result.json_payload
         payload_agenda = payload.get("agenda") if isinstance(payload.get("agenda"), dict) else None
-        agenda = (
-            DebateAgenda.model_validate(payload_agenda)
-            if payload_agenda
-            else suggested_agenda
-        )
+        agenda = DebateAgenda.model_validate(payload_agenda) if payload_agenda else suggested_agenda
         return JudgeDecision(
             mode=JudgeMode.AI,
             action=JudgeActionType(payload.get("action", "continue_debate")),
             reasoning=str(payload.get("reasoning", result.content)),
             confidence=float(payload.get("confidence", 0.7)),
-            disagreement_level=float(payload.get("disagreement_level", self._disagreement_level(run))),
+            disagreement_level=float(
+                payload.get("disagreement_level", self._disagreement_level(run))
+            ),
             expected_value_of_next_round=float(payload.get("expected_value_of_next_round", 0.2)),
-            next_round_type=RoundType(payload["next_round_type"]) if payload.get("next_round_type") else None,
-            focus_areas=[str(item) for item in payload.get("focus_areas", [])] or agenda.focus_areas,
-            budget_pressure=self.budget_manager.budget_pressure(run.budget_policy, run.budget_ledger),
+            next_round_type=RoundType(payload["next_round_type"])
+            if payload.get("next_round_type")
+            else None,
+            focus_areas=[str(item) for item in payload.get("focus_areas", [])]
+            or agenda.focus_areas,
+            budget_pressure=self.budget_manager.budget_pressure(
+                run.budget_policy, run.budget_ledger
+            ),
             agenda=agenda,
         )
 
@@ -385,6 +403,8 @@ class JudgeService:
         run: ExperimentRun,
         decision: JudgeDecision | None,
     ) -> JudgeVerdict:
+        if not run.plans:
+            raise ValueError("Cannot finalize a run without any plans.")
         evaluations = run.plan_evaluations or self.evaluate_plans(run.plans)
         sorted_plans = sorted(
             run.plans,
@@ -396,36 +416,30 @@ class JudgeService:
         )
         top_plan = sorted_plans[0]
         second_plan = sorted_plans[1] if len(sorted_plans) > 1 else None
-        top_score = next(item.overall_score for item in evaluations if item.plan_id == top_plan.plan_id)
+        top_score = next(
+            item.overall_score for item in evaluations if item.plan_id == top_plan.plan_id
+        )
         second_score = (
             next(item.overall_score for item in evaluations if item.plan_id == second_plan.plan_id)
             if second_plan
             else 0.0
         )
         margin = round(top_score - (second_score if second_plan else 0.0), 3)
-        if (
-            margin < 0.05
-            and second_plan
-            and run.judge.prefer_merged_plan_on_close_scores
-        ):
+        if margin < 0.05 and second_plan and run.judge.prefer_merged_plan_on_close_scores:
             # Close scores with merge preference → merged verdict
-            combined_strengths: list[str] = []
-            seen: set[str] = set()
-            for strength in top_plan.strengths + second_plan.strengths:
-                if strength not in seen:
-                    seen.add(strength)
-                    combined_strengths.append(strength)
             rationale = (
                 f"Scores are too close to declare a clear winner (gap: {margin:.3f}). "
                 f"The best elements of both plans have been merged."
             )
+            merged_plan = self.merge_plans(top_plan, second_plan)
             return JudgeVerdict(
                 judge_mode=run.judge.mode,
                 verdict_type=VerdictType.MERGED,
                 winning_plan_ids=[top_plan.plan_id, second_plan.plan_id],
+                synthesized_plan=merged_plan,
                 rationale=rationale,
-                selected_strengths=combined_strengths[:6],
-                rejected_risks=[risk.title for risk in top_plan.risks[:3]],
+                selected_strengths=merged_plan.strengths[:6],
+                rejected_risks=[risk.title for risk in merged_plan.risks[:3]],
                 stop_reason=decision.reasoning if decision else "judge_finalize",
                 confidence=max(0.70, top_score),
             )
@@ -449,13 +463,17 @@ class JudgeService:
         decision: JudgeDecision | None,
     ) -> JudgeVerdict | None:
         plan_summaries = "\n".join(
-            f"- [{p.plan_id[:8]}] {p.display_name}: {p.summary[:200]}"
-            for p in run.plans
+            f"- [{p.plan_id[:8]}] {p.display_name}: {p.summary[:200]}" for p in run.plans
         )
-        lang = run.response_language if run.response_language and run.response_language != "auto" else ""
+        lang = (
+            run.response_language
+            if run.response_language and run.response_language != "auto"
+            else ""
+        )
         lang_prefix = (
             f"MANDATORY LANGUAGE: Write ALL content in {lang}. Every field must be in {lang}.\n\n"
-            if lang else ""
+            if lang
+            else ""
         )
         instructions = (
             f"{lang_prefix}"
@@ -500,13 +518,22 @@ class JudgeService:
         if winning_id not in valid_ids:
             matched = next((p.plan_id for p in run.plans if p.plan_id.startswith(winning_id)), None)
             winning_id = matched or (run.plans[0].plan_id if run.plans else winning_id)
-        winner = next((p for p in run.plans if p.plan_id == winning_id), run.plans[0] if run.plans else None)
+        winner = next(
+            (p for p in run.plans if p.plan_id == winning_id), run.plans[0] if run.plans else None
+        )
         return JudgeVerdict(
             judge_mode=JudgeMode.AI,
             verdict_type=VerdictType.WINNER,
             winning_plan_ids=[winning_id],
-            rationale=str(payload.get("rationale", decision.reasoning if decision else "AI judge selected the winner.")),
-            selected_strengths=[str(s) for s in payload.get("selected_strengths", winner.strengths[:3] if winner else [])],
+            rationale=str(
+                payload.get(
+                    "rationale", decision.reasoning if decision else "AI judge selected the winner."
+                )
+            ),
+            selected_strengths=[
+                str(s)
+                for s in payload.get("selected_strengths", winner.strengths[:3] if winner else [])
+            ],
             rejected_risks=[str(r) for r in payload.get("rejected_risks", [])],
             stop_reason=decision.reasoning if decision else "ai_judge_finalize",
             confidence=decision.confidence if decision else 0.75,
@@ -525,7 +552,7 @@ class JudgeService:
                 mitigation=str(risk.get("mitigation", "Clarify mitigation.")),
             )
             for risk in risks_raw
-            if isinstance(risks_raw, list) and isinstance(risk, dict)
+            if isinstance(risk, dict)
         ]
         return PlanDocument(
             agent_id="judge:synthesis",
@@ -548,26 +575,40 @@ class JudgeService:
             agent_id="judge:merged",
             display_name="Merged finalist plan",
             summary=f"{top_plan.summary} Combined with selected strengths from {second_plan.display_name}.",
-            evidence_basis=list(dict.fromkeys(top_plan.evidence_basis[:3] + second_plan.evidence_basis[:3])),
+            evidence_basis=list(
+                dict.fromkeys(top_plan.evidence_basis[:3] + second_plan.evidence_basis[:3])
+            ),
             assumptions=list(dict.fromkeys(top_plan.assumptions[:3] + second_plan.assumptions[:3])),
-            architecture=list(dict.fromkeys(top_plan.architecture[:3] + second_plan.architecture[:3])),
+            architecture=list(
+                dict.fromkeys(top_plan.architecture[:3] + second_plan.architecture[:3])
+            ),
             implementation_strategy=list(
                 dict.fromkeys(
                     top_plan.implementation_strategy[:3] + second_plan.implementation_strategy[:3]
                 )
             ),
-            risks=list({risk.title: risk for risk in (top_plan.risks + second_plan.risks)}.values()),
+            risks=list(
+                {risk.title: risk for risk in (top_plan.risks + second_plan.risks)}.values()
+            ),
             strengths=list(dict.fromkeys(top_plan.strengths[:3] + second_plan.strengths[:3])),
             weaknesses=list(dict.fromkeys(top_plan.weaknesses[:2] + second_plan.weaknesses[:2])),
             trade_offs=list(dict.fromkeys(top_plan.trade_offs[:2] + second_plan.trade_offs[:2])),
-            open_questions=list(dict.fromkeys(top_plan.open_questions[:2] + second_plan.open_questions[:2])),
+            open_questions=list(
+                dict.fromkeys(top_plan.open_questions[:2] + second_plan.open_questions[:2])
+            ),
         )
+
+    def merge_plans(self, top_plan: PlanDocument, second_plan: PlanDocument) -> PlanDocument:
+        """Public merger used by both automated and human-judge verdict paths."""
+        return self._build_merged_plan(top_plan, second_plan)
 
     def _disagreement_level(self, run: ExperimentRun) -> float:
         if not run.debate_rounds:
             if len(run.plan_evaluations) < 2:
                 return 0.4
-            score_gap = abs(run.plan_evaluations[0].overall_score - run.plan_evaluations[1].overall_score)
+            score_gap = abs(
+                run.plan_evaluations[0].overall_score - run.plan_evaluations[1].overall_score
+            )
             return round(max(0.2, 1.0 - score_gap), 2)
         summary = run.debate_rounds[-1].summary
         return round(min(1.0, len(summary.key_disagreements) / max(1, len(run.plans) + 1)), 2)
@@ -588,9 +629,13 @@ class JudgeService:
         top_score = evaluations[0].overall_score if evaluations else 0.5
         novelty_penalty = 0.0
         if run.debate_rounds:
-            latest_novelty = mean(message.novelty_score for message in run.debate_rounds[-1].messages)
+            latest_novelty = mean(
+                message.novelty_score for message in run.debate_rounds[-1].messages
+            )
             novelty_penalty = max(0.0, 0.15 - latest_novelty)
-        return round(min(0.95, max(0.5, top_score - (disagreement_level * 0.15) - novelty_penalty)), 2)
+        return round(
+            min(0.95, max(0.5, top_score - (disagreement_level * 0.15) - novelty_penalty)), 2
+        )
 
     def _next_round_type(self, run: ExperimentRun) -> RoundType:
         current_rounds = len(run.debate_rounds)
@@ -607,40 +652,10 @@ class JudgeService:
         return latest.key_disagreements[:4] or ["implementation complexity", "traceability"]
 
     def _image_inputs(self, run: ExperimentRun) -> list[dict]:
-        if not run.context_bundle:
-            return []
-        image_inputs: list[dict] = []
-        for source in run.context_bundle.sources:
-            for fragment in source.fragments:
-                media_type = fragment.media_type or str(source.metadata.get("media_type", ""))
-                if not fragment.is_binary or not media_type.startswith("image/"):
-                    continue
-                image_inputs.append(
-                    {
-                        "source_id": source.source_id,
-                        "label": fragment.label,
-                        "path": fragment.path or source.resolved_path,
-                        "media_type": media_type,
-                        "checksum": fragment.checksum,
-                        "size_bytes": fragment.size_bytes,
-                        "inline_data": fragment.inline_data,
-                    }
-                )
-        return image_inputs
+        return extract_image_inputs(run.context_bundle)
 
     def _image_summary(self, image_inputs: list[dict]) -> str:
-        if not image_inputs:
-            return "No shared image inputs."
-        snippets = []
-        for item in image_inputs[:3]:
-            size_bytes = item.get("size_bytes") or 0
-            size_text = f"{round(size_bytes / 1024, 1)} KB" if size_bytes else "size unknown"
-            snippets.append(
-                f"{item['label']} ({item['media_type']}, {size_text}, checksum {str(item['checksum'])[:8]})"
-            )
-        if len(image_inputs) > len(snippets):
-            snippets.append(f"+{len(image_inputs) - len(snippets)} more image(s)")
-        return f"{len(image_inputs)} shared image(s): " + "; ".join(snippets)
+        return summarize_image_inputs(image_inputs, limit=3)
 
     def _initial_disagreements(self, run: ExperimentRun) -> list[str]:
         return [
@@ -729,7 +744,11 @@ class JudgeService:
                     title="Evidence Grounding",
                     question="Which claims in the competing plans are directly supported by the frozen evidence, and which remain inference?",
                     why_it_matters="The debate should not progress while unsupported claims still drive the comparison.",
-                    focus_areas=["objective evidence", "explicit uncertainty", "source-backed trade-offs"],
+                    focus_areas=[
+                        "objective evidence",
+                        "explicit uncertainty",
+                        "source-backed trade-offs",
+                    ],
                     source_plan_ids=[plan.plan_id for plan in run.plans],
                 )
             )
@@ -781,7 +800,9 @@ class JudgeService:
         if not candidates:
             candidates.append(
                 DebateAgenda(
-                    title="Final Comparison" if round_type == RoundType.FINAL_COMPARISON else "Implementation Fit",
+                    title="Final Comparison"
+                    if round_type == RoundType.FINAL_COMPARISON
+                    else "Implementation Fit",
                     question="Which plan fits the existing codebase or task context best, and what objective evidence supports that answer?",
                     why_it_matters="The judge still needs one concrete comparison axis before finalizing.",
                     focus_areas=focus_areas[:3],
