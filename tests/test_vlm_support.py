@@ -226,6 +226,21 @@ def test_cli_wrapper_report_synthesis_prompt_requests_direct_answer():
     assert "directly answer the user's question" in prompt
 
 
+def test_cli_wrapper_answer_synthesis_prompt_requires_transcript_grounding():
+    prompt = build_prompt(
+        {
+            "operation": "answer_synthesis",
+            "instructions": "Answer the user from the debate transcript.",
+            "metadata": {},
+        }
+    )
+
+    assert "final_answer" in prompt
+    assert "final answering agent, not the judge" in prompt
+    assert "debate transcript" in prompt
+    assert "Do not just announce the winner" in prompt
+
+
 def test_call_gemini_prefers_plain_headless_mode(monkeypatch):
     commands: list[list[str]] = []
 

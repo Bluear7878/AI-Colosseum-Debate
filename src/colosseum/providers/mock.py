@@ -112,6 +112,10 @@ class MockProvider(BaseProvider):
             payload = self._build_judge_payload(metadata)
         elif operation == "synthesis":
             payload = self._build_synthesis_payload(metadata)
+        elif operation == "answer_synthesis":
+            payload = self._build_answer_synthesis_payload(metadata)
+        elif operation == "report_synthesis":
+            payload = self._build_report_synthesis_payload(metadata)
         else:
             payload = {"content": "Unsupported mock operation."}
 
@@ -291,5 +295,68 @@ class MockProvider(BaseProvider):
             ],
             "open_questions": [
                 "When should a targeted revision round replace a full debate round?"
+            ],
+        }
+
+    def _build_answer_synthesis_payload(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        task_problem = metadata.get("task_problem", "the user's question")
+        plan_summaries = metadata.get("plan_summaries", [])
+        adopted_points = metadata.get("adopted_points", [])
+        debate_resolutions = metadata.get("debate_resolutions", [])
+        caveats = metadata.get("caveats", [])
+
+        base_answer = (
+            plan_summaries[0]
+            if plan_summaries
+            else metadata.get("verdict_rationale", "Use the strongest evidence-backed answer.")
+        )
+        support = adopted_points[0] if adopted_points else ""
+        resolution = debate_resolutions[0] if debate_resolutions else ""
+
+        sentences = [
+            f"For the user's question ({task_problem}), the debate supports this answer: {base_answer}",
+        ]
+        if support:
+            sentences.append(f"The strongest debate-backed reason was {support}")
+        elif resolution:
+            sentences.append(f"The debate converged on this resolution: {resolution}")
+        if caveats:
+            sentences.append(f"Key caveat: {caveats[0]}")
+
+        return {
+            "final_answer": ". ".join(sentence.rstrip(".") for sentence in sentences) + ".",
+            "supporting_points": adopted_points[:3] or debate_resolutions[:3],
+            "caveats": caveats[:2],
+        }
+
+    def _build_report_synthesis_payload(self, metadata: dict[str, Any]) -> dict[str, Any]:
+        verdict_type = str(metadata.get("verdict_type", "winner")).replace("_", " ")
+        verdict_rationale = metadata.get("verdict_rationale", "")
+        final_answer = metadata.get("precomputed_final_answer", "")
+        adopted_points = metadata.get("adopted_points", [])
+        debate_resolutions = metadata.get("debate_resolutions", [])
+        round_count = metadata.get("round_count", 0)
+
+        if not final_answer:
+            answer_payload = self._build_answer_synthesis_payload(metadata)
+            final_answer = answer_payload["final_answer"]
+
+        key_conclusions = adopted_points[:3] or debate_resolutions[:3]
+        highlights = debate_resolutions[:2] or adopted_points[:2]
+
+        return {
+            "one_line_verdict": f"{verdict_type.title()} recommendation — {verdict_rationale}".strip(),
+            "final_answer": final_answer,
+            "executive_summary": (
+                f"The debate answered the user's question after {round_count} round(s). "
+                f"{verdict_rationale}"
+            ).strip(),
+            "key_conclusions": key_conclusions,
+            "debate_highlights": highlights,
+            "verdict_explanation": verdict_rationale
+            or "The judge selected the strongest debate-backed option.",
+            "recommendations": [
+                "Apply the answer directly to the user's task.",
+                "Validate the remaining caveats before irreversible rollout.",
             ],
         }
