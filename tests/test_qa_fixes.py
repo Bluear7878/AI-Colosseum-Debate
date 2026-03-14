@@ -19,11 +19,14 @@ from colosseum.api.routes import (
     get_run,
 )
 from colosseum.core.models import (
+    AdoptedArgument,
+    AgentMessage,
     AgentConfig,
     BillingTier,
     BudgetLedger,
     ContextSourceInput,
     ContextSourceKind,
+    DebateRound,
     ExperimentRun,
     FinalReport,
     HumanJudgeActionRequest,
@@ -34,11 +37,15 @@ from colosseum.core.models import (
     ProviderConfig,
     ProviderQuotaState,
     ProviderType,
+    RoundAdjudication,
+    RoundSummary,
+    RoundType,
     RunCreateRequest,
     TaskSpec,
     UsageMetrics,
     VerdictType,
 )
+from colosseum.providers.base import ProviderResult
 from colosseum.providers.mock import MockProvider
 from colosseum.services.budget import BudgetManager
 from colosseum.services.context_bundle import ContextBundleService
@@ -49,7 +56,7 @@ from colosseum.services.normalizers import ResponseNormalizer
 from colosseum.services.orchestrator import ColosseumOrchestrator
 from colosseum.services import pdf_report as pdf_report_module
 from colosseum.services.pdf_report import generate_pdf
-from colosseum.services.provider_runtime import ProviderRuntimeService
+from colosseum.services.provider_runtime import ProviderExecution, ProviderRuntimeService
 from colosseum.services.repository import FileRunRepository
 from colosseum.services.report_synthesizer import ReportSynthesizer
 
@@ -630,17 +637,149 @@ def test_report_synthesizer_generates_direct_final_answer():
         verdict_type=VerdictType.WINNER,
         winning_plan_ids=[plan.plan_id],
         rationale="The safer rollout has the better risk profile.",
-        selected_strengths=["Lower operational risk", "Clear rollback path"],
         rejected_risks=["Telemetry thresholds still need confirmation"],
         stop_reason="judge_finalize",
         confidence=0.87,
     )
+    run.debate_rounds = [
+        DebateRound(
+            index=1,
+            round_type=RoundType.FINAL_COMPARISON,
+            purpose="Compare the rollout options.",
+            messages=[
+                AgentMessage(
+                    round_index=1,
+                    round_type=RoundType.FINAL_COMPARISON,
+                    agent_id="a",
+                    plan_id=plan.plan_id,
+                    content="A staged rollout gives us explicit rollback checkpoints.",
+                )
+            ],
+            summary=RoundSummary(key_disagreements=["Risk vs speed trade-off"]),
+            adjudication=RoundAdjudication(
+                resolution="The safer rollout wins because rollback checkpoints matter more than raw speed.",
+                adopted_arguments=[
+                    AdoptedArgument(
+                        agent_id="a",
+                        display_name="A",
+                        claim_kind="defense",
+                        summary="Rollback checkpoints keep the launch reversible.",
+                    )
+                ],
+                unresolved_points=["Telemetry thresholds still need confirmation"],
+            ),
+        )
+    ]
 
-    report = asyncio.run(synthesizer.synthesize(run, verdict=verdict))
+    report = synthesizer._automated_synthesize(run, verdict)
 
     assert "best answer is to follow A's approach" in report.final_answer
     assert "safer rollout path" in report.final_answer
+    assert "Rollback checkpoints keep the launch reversible" in report.final_answer
     assert "Telemetry thresholds still need confirmation" in report.final_answer
+
+
+def test_report_synthesizer_runs_separate_answer_agent_from_debate_transcript():
+    """Final answer should come from a dedicated synthesis actor, not the judge verdict alone."""
+
+    class RecordingRuntime:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        async def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            if kwargs["operation"] == "answer_synthesis":
+                payload = {
+                    "final_answer": (
+                        "Use the staged rollout. The debate showed that rollback checkpoints "
+                        "and explicit telemetry gates matter more than shipping faster."
+                    ),
+                    "supporting_points": ["Rollback checkpoints keep the launch reversible."],
+                    "caveats": ["Confirm telemetry thresholds before launch."],
+                }
+            else:
+                payload = {
+                    "one_line_verdict": "A wins — staged rollout is safer.",
+                    "final_answer": kwargs["metadata"].get("precomputed_final_answer", ""),
+                    "executive_summary": "The debate answered the user's question with a staged rollout recommendation.",
+                    "key_conclusions": ["Rollback checkpoints keep the launch reversible."],
+                    "debate_highlights": ["Round 1 resolution: staged rollout is safer."],
+                    "verdict_explanation": "The judge adopted the rollback argument.",
+                    "recommendations": ["Confirm telemetry thresholds before launch."],
+                }
+            return ProviderExecution(
+                result=ProviderResult(content=json.dumps(payload), json_payload=payload),
+                effective_provider=kwargs["provider_config"],
+            )
+
+    runtime = RecordingRuntime()
+    synthesizer = ReportSynthesizer(provider_runtime=runtime)
+    agent_provider = ProviderConfig(type=ProviderType.MOCK, model="mock-a")
+    plan = PlanDocument(
+        agent_id="a",
+        display_name="A",
+        summary="Use a staged rollout with explicit rollback checkpoints.",
+    )
+    run = ExperimentRun(
+        project_name="separate-answer-agent",
+        task=TaskSpec(
+            title="Launch decision",
+            problem_statement="Should we ship immediately or use a staged rollout?",
+        ),
+        agents=[AgentConfig(agent_id="a", display_name="A", provider=agent_provider)],
+        judge=JudgeConfig(mode=JudgeMode.AUTOMATED),
+        plans=[plan],
+        debate_rounds=[
+            DebateRound(
+                index=1,
+                round_type=RoundType.FINAL_COMPARISON,
+                purpose="Resolve the rollout choice.",
+                messages=[
+                    AgentMessage(
+                        round_index=1,
+                        round_type=RoundType.FINAL_COMPARISON,
+                        agent_id="a",
+                        plan_id=plan.plan_id,
+                        content=(
+                            "The staged rollout gives us rollback checkpoints and telemetry gates, "
+                            "which directly answers the launch-risk question."
+                        ),
+                    )
+                ],
+                summary=RoundSummary(key_disagreements=["Speed vs reversibility"]),
+                adjudication=RoundAdjudication(
+                    resolution="Staged rollout is safer because it keeps the launch reversible.",
+                    adopted_arguments=[
+                        AdoptedArgument(
+                            agent_id="a",
+                            display_name="A",
+                            claim_kind="defense",
+                            summary="Rollback checkpoints keep the launch reversible.",
+                        )
+                    ],
+                    unresolved_points=["Confirm telemetry thresholds before launch."],
+                ),
+            )
+        ],
+    )
+    verdict = JudgeVerdict(
+        judge_mode=JudgeMode.AUTOMATED,
+        verdict_type=VerdictType.WINNER,
+        winning_plan_ids=[plan.plan_id],
+        rationale="The staged rollout directly addresses launch risk.",
+        stop_reason="judge_finalize",
+        confidence=0.91,
+    )
+
+    report = asyncio.run(synthesizer.synthesize(run, verdict=verdict))
+
+    assert report.final_answer.startswith("Use the staged rollout.")
+    assert [call["operation"] for call in runtime.calls] == [
+        "answer_synthesis",
+        "report_synthesis",
+    ]
+    assert runtime.calls[0]["actor_label"] == "Final Answer Synthesizer"
+    assert "rollback checkpoints and telemetry gates" in runtime.calls[0]["instructions"]
 
 
 def test_pdf_report_includes_final_answer_section(monkeypatch):
