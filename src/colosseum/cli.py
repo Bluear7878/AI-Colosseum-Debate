@@ -443,6 +443,15 @@ CLI_AUTH_INFO = {
         "install_requires": None,
         "auth_check_cmd": ["ollama", "--version"],
     },
+    "llmfit": {
+        "cmd": "llmfit",
+        "login": None,
+        "auth": "None (local hardware analysis)",
+        "billing": "Completely free. Analyzes local GPU/CPU to determine which models can run.",
+        "install_cmd": "curl -fsSL https://raw.githubusercontent.com/AlexsJones/llmfit/main/install.sh | sh",
+        "install_requires": None,
+        "auth_check_cmd": ["llmfit", "--version"],
+    },
 }
 
 
@@ -507,7 +516,7 @@ def _print_local_runtime_status(status) -> None:
         f"  Runtime running: {GREEN if status.runtime_running else GOLD}{status.runtime_running}{RST}"
     )
     print(
-        f"  GPU setting: {DIM}{'auto' if status.settings.gpu_count is None else status.settings.gpu_count}{RST}"
+        f"  GPU setting: {DIM}{'auto' if status.settings.selected_gpu_indices is None else status.settings.selected_gpu_indices}{RST}"
     )
     if status.gpu_devices:
         print(f"  GPUs detected: {len(status.gpu_devices)}")
@@ -539,11 +548,11 @@ def cmd_local_runtime(args: argparse.Namespace) -> None:
     if action == "configure":
         update_kwargs: dict[str, object] = {"restart_runtime": not args.no_restart}
         if args.auto_gpu:
-            update_kwargs["gpu_count"] = None
+            update_kwargs["selected_gpu_indices"] = None
         elif args.cpu_only:
-            update_kwargs["gpu_count"] = 0
+            update_kwargs["selected_gpu_indices"] = []
         elif args.gpu_count is not None:
-            update_kwargs["gpu_count"] = args.gpu_count
+            update_kwargs["selected_gpu_indices"] = list(range(args.gpu_count))
         _print_local_runtime_status(
             service.update_settings(LocalRuntimeConfigUpdate(**update_kwargs))
         )
