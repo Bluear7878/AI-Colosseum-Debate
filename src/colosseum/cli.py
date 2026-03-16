@@ -1194,6 +1194,7 @@ def cmd_debate(args: argparse.Namespace) -> None:
 
     topic = args.topic
     depth = args.depth
+    timeout_seconds = args.timeout or 0
     persona_specs = args.personas or []
     json_output = args.json_output
     use_monitor = getattr(args, "monitor", False)
@@ -1312,6 +1313,8 @@ def cmd_debate(args: argparse.Namespace) -> None:
             per_agent_message_limit=1,
             min_novelty_threshold=profile["min_novelty_threshold"],
             convergence_threshold=profile["convergence_threshold"],
+            planning_timeout_seconds=timeout_seconds,
+            round_timeout_seconds=timeout_seconds,
         ),
     )
 
@@ -1911,6 +1914,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=3,
         choices=[1, 2, 3, 4, 5],
         help="Debate depth 1=Quick 2=Brief 3=Standard 4=Thorough 5=Deep (default: 3)",
+    )
+    p_debate.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="Time limit per phase in seconds (applies to planning and each round). Omit for no limit.",
     )
     p_debate.add_argument(
         "-p",
