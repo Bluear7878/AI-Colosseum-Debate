@@ -72,6 +72,8 @@ src/colosseum/services/prompt_contracts.py
 src/colosseum/services/provider_runtime.py
 src/colosseum/services/report_synthesizer.py
 src/colosseum/services/repository.py
+src/colosseum/services/review_orchestrator.py
+src/colosseum/services/review_prompts.py
 src/colosseum/web/app.js
 src/colosseum/web/index.html
 src/colosseum/web/report.html

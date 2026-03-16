@@ -1933,6 +1933,64 @@ def _verdict_json_payload(verdict) -> dict[str, object]:
     return payload
 
 
+def _compute_agent_stats(run) -> list[dict]:
+    """Compute per-agent debate statistics from the run."""
+    stats: dict[str, dict] = {}
+    for agent in run.agents:
+        stats[agent.agent_id] = {
+            "name": _display_label(agent),
+            "prompt_tok": 0,
+            "completion_tok": 0,
+            "total_tok": 0,
+            "cost": 0.0,
+            "critiques": 0,
+            "defenses": 0,
+            "concessions": 0,
+            "hybrids": 0,
+            "total_claims": 0,
+            "adopted_claims": 0,
+            "novelty_scores": [],
+        }
+
+    # Accumulate from budget ledger
+    for actor_id, usage in run.budget_ledger.by_actor.items():
+        if actor_id in stats:
+            stats[actor_id]["prompt_tok"] = usage.prompt_tokens
+            stats[actor_id]["completion_tok"] = usage.completion_tokens
+            stats[actor_id]["total_tok"] = usage.total_tokens
+            stats[actor_id]["cost"] = usage.estimated_cost_usd
+
+    # Accumulate from debate round messages
+    for dr in run.debate_rounds:
+        for msg in dr.messages:
+            s = stats.get(msg.agent_id)
+            if not s:
+                continue
+            s["critiques"] += len(msg.critique_points)
+            s["defenses"] += len(msg.defense_points)
+            s["concessions"] += len(msg.concessions)
+            s["hybrids"] += len(msg.hybrid_suggestions)
+            s["total_claims"] += len(msg.critique_points) + len(msg.defense_points)
+            s["novelty_scores"].append(msg.novelty_score)
+
+        # Count adopted arguments per agent from adjudication
+        if dr.adjudication:
+            for adopted in dr.adjudication.adopted_arguments:
+                s = stats.get(adopted.agent_id)
+                if s:
+                    s["adopted_claims"] += 1
+
+    result = []
+    for stat in stats.values():
+        total = stat["total_claims"]
+        adopted = stat["adopted_claims"]
+        stat["adoption_pct"] = (adopted / total * 100) if total > 0 else 0.0
+        scores = stat.pop("novelty_scores")
+        stat["novelty_avg"] = sum(scores) / len(scores) if scores else 0.0
+        result.append(stat)
+    return result
+
+
 def _verdict(run):
     v = run.verdict
     if not v:
@@ -1965,14 +2023,41 @@ def _verdict(run):
         print(f"\n    {MAGENTA}Merged Plan:{RST}")
         print(_wrap(v.synthesized_plan.summary, indent=6))
 
-    # Token usage per agent
-    if run.budget_ledger.by_actor:
-        print(f"\n    {DIM}Token usage:{RST}")
-        for actor_id, usage in run.budget_ledger.by_actor.items():
-            agent = next((a for a in run.agents if a.agent_id == actor_id), None)
-            name = _display_label(agent) if agent else actor_id
-            cost_str = f"  ${usage.estimated_cost_usd:.4f}" if usage.estimated_cost_usd > 0 else ""
-            print(f"      {DIM}{name}: {usage.total_tokens} tok{cost_str}{RST}")
+    # Per-agent detailed statistics
+    agent_stats = _compute_agent_stats(run)
+    if agent_stats:
+        print(f"\n  {BOLD}Agent Statistics{RST}")
+        print(f"  {'─' * 58}")
+        for stat in agent_stats:
+            cost_str = f"${stat['cost']:.4f}" if stat["cost"] > 0 else "—"
+            print(
+                f"    {CYAN}{BOLD}{stat['name']}{RST}"
+            )
+            print(
+                f"      Tokens: {stat['prompt_tok']:,} prompt + {stat['completion_tok']:,} completion"
+                f" = {BOLD}{stat['total_tok']:,}{RST}  Cost: {cost_str}"
+            )
+            parts = []
+            if stat["critiques"]:
+                parts.append(f"{stat['critiques']} critiques")
+            if stat["defenses"]:
+                parts.append(f"{stat['defenses']} defenses")
+            if stat["concessions"]:
+                parts.append(f"{stat['concessions']} concessions")
+            if stat["hybrids"]:
+                parts.append(f"{stat['hybrids']} hybrid ideas")
+            if parts:
+                print(f"      Arguments: {' · '.join(parts)}")
+            adoption_pct = stat["adoption_pct"]
+            novelty_avg = stat["novelty_avg"]
+            bar_len = 12
+            filled = int(adoption_pct / 100 * bar_len)
+            bar = f"{GREEN}{'|' * filled}{DIM}{'.' * (bar_len - filled)}{RST}"
+            print(
+                f"      Adoption: {bar} {adoption_pct:.0f}%"
+                f"  Novelty: {novelty_avg:.2f}"
+            )
+        print(f"  {'─' * 58}")
 
     total_tok = run.budget_ledger.total.total_tokens
     total_cost = run.budget_ledger.total.estimated_cost_usd
@@ -2145,6 +2230,7 @@ _PHASE_LETTER_MAP = {
     "C": ReviewPhase.ARCHITECTURE,
     "D": ReviewPhase.SECURITY_PERFORMANCE,
     "E": ReviewPhase.TEST_COVERAGE,
+    "F": ReviewPhase.RED_TEAM,
 }
 
 _SEVERITY_COLORS = {
@@ -2751,7 +2837,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=None,
         metavar="PHASE",
-        help="Review phases to run: A (rules) B (impl) C (arch) D (security) E (tests). Default: all",
+        help="Review phases: A (rules) B (impl) C (arch) D (security) E (tests) F (red-team). Default: A-E",
     )
     p_review.add_argument(
         "-j",

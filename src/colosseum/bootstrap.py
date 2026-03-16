@@ -11,6 +11,7 @@ from colosseum.services.orchestrator import ColosseumOrchestrator
 from colosseum.services.provider_runtime import ProviderRuntimeService
 from colosseum.services.report_synthesizer import ReportSynthesizer
 from colosseum.services.repository import FileRunRepository
+from colosseum.services.review_orchestrator import ReviewOrchestrator
 
 
 @lru_cache(maxsize=1)
@@ -40,3 +41,8 @@ def get_orchestrator() -> ColosseumOrchestrator:
         provider_runtime=provider_runtime,
         report_synthesizer=report_synthesizer,
     )
+
+
+@lru_cache(maxsize=1)
+def get_review_orchestrator() -> ReviewOrchestrator:
+    return ReviewOrchestrator(orchestrator=get_orchestrator())
