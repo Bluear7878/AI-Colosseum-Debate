@@ -451,6 +451,7 @@ CLI_AUTH_INFO = {
         "install_cmd": "curl -fsSL https://raw.githubusercontent.com/AlexsJones/llmfit/main/install.sh | sh",
         "install_requires": None,
         "auth_check_cmd": ["llmfit", "--version"],
+        "auto_install": True,  # Install automatically during setup — no prompt needed
     },
 }
 
@@ -962,8 +963,10 @@ def cmd_setup(args: argparse.Namespace) -> None:
         else:
             print(f"    {RED}✗ Not installed{RST}")
 
-            # Offer to install
-            if yes_all:
+            # Offer to install (auto_install tools skip the prompt)
+            if yes_all or info.get("auto_install"):
+                if info.get("auto_install") and not yes_all:
+                    print(f"    {DIM}Auto-installing {tool_name}...{RST}")
                 do_install = True
             else:
                 try:
