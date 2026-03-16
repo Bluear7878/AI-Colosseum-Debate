@@ -246,7 +246,7 @@ class ProviderConfig(BaseModel):
     model: str = "mock-default"
     command: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
-    timeout_seconds: int | None = 300
+    timeout_seconds: int | None = None
     pricing: ProviderPricing = Field(default_factory=ProviderPricing)
     ollama_model: str | None = None  # only used when type=ollama
     hf_model: str | None = None  # only used when type=huggingface_local
@@ -851,6 +851,88 @@ class FinalReport(BaseModel):
     debate_highlights: list[str] = Field(default_factory=list)
     verdict_explanation: str = ""
     recommendations: list[str] = Field(default_factory=list)
+
+
+class ReviewPhase(StrEnum):
+    PROJECT_RULES = "project_rules"
+    IMPLEMENTATION = "implementation"
+    ARCHITECTURE = "architecture"
+    SECURITY_PERFORMANCE = "security_performance"
+    TEST_COVERAGE = "test_coverage"
+    RED_TEAM = "red_team"
+
+
+class ReviewSeverity(StrEnum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    INFO = "info"
+
+
+class ReviewFinding(BaseModel):
+    finding_id: str = Field(default_factory=lambda: str(uuid4()))
+    phase: ReviewPhase
+    severity: ReviewSeverity = ReviewSeverity.MEDIUM
+    title: str
+    description: str = ""
+    file_path: str | None = None
+    line_range: str | None = None
+    recommendation: str = ""
+    agent_consensus: float = 0.0
+    evidence: list[str] = Field(default_factory=list)
+
+
+class PhaseResult(BaseModel):
+    phase: ReviewPhase
+    phase_label: str
+    run_id: str
+    findings: list[ReviewFinding] = Field(default_factory=list)
+    phase_summary: str = ""
+    verdict_type: VerdictType | None = None
+    confidence: float = 0.0
+    usage: UsageMetrics = Field(default_factory=UsageMetrics)
+    completed_at: datetime = Field(default_factory=utc_now)
+
+
+class ReviewReport(BaseModel):
+    review_id: str = Field(default_factory=lambda: str(uuid4()))
+    created_at: datetime = Field(default_factory=utc_now)
+    target_description: str = ""
+    phase_results: list[PhaseResult] = Field(default_factory=list)
+    total_findings: int = 0
+    critical_count: int = 0
+    high_count: int = 0
+    medium_count: int = 0
+    low_count: int = 0
+    overall_summary: str = ""
+    top_recommendations: list[str] = Field(default_factory=list)
+    total_usage: UsageMetrics = Field(default_factory=UsageMetrics)
+    git_diff_included: bool = False
+    reviewed_paths: list[str] = Field(default_factory=list)
+
+
+class ReviewCreateRequest(BaseModel):
+    project_name: str = "Colosseum"
+    target_description: str
+    context_sources: list[ContextSourceInput] = Field(default_factory=list)
+    agents: list[AgentConfig]
+    judge: JudgeConfig = Field(default_factory=JudgeConfig)
+    budget_policy: BudgetPolicy = Field(default_factory=BudgetPolicy)
+    phases: list[ReviewPhase] = Field(
+        default_factory=lambda: [p for p in ReviewPhase if p != ReviewPhase.RED_TEAM],
+    )
+    git_diff: str | None = None
+    rules_context: str | None = None
+    response_language: str = "auto"
+
+    @model_validator(mode="after")
+    def validate_review_request(self) -> "ReviewCreateRequest":
+        if not self.agents:
+            raise ValueError("At least one agent is required.")
+        if not self.phases:
+            raise ValueError("At least one review phase is required.")
+        return self
 
 
 class ExperimentRun(BaseModel):

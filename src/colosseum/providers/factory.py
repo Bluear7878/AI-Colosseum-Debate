@@ -24,10 +24,17 @@ def _strip_provider_prefix(model_name: str | None) -> str | None:
 
 
 def _timeout(config: ProviderConfig, default: int) -> int | None:
-    """Return the effective timeout.  ``None`` means no limit."""
+    """Return the effective timeout.
+
+    ``None`` in config means *no explicit preference* — fall back to
+    *default* (provider-specific safety net).  ``0`` means **no limit**.
+    A positive integer is used as-is.
+    """
     if config.timeout_seconds is None:
+        return default
+    if config.timeout_seconds == 0:
         return None  # explicitly no limit
-    return config.timeout_seconds or default
+    return config.timeout_seconds
 
 
 def build_provider(config: ProviderConfig) -> BaseProvider:

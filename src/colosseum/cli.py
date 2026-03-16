@@ -1933,6 +1933,64 @@ def _verdict_json_payload(verdict) -> dict[str, object]:
     return payload
 
 
+def _compute_agent_stats(run) -> list[dict]:
+    """Compute per-agent debate statistics from the run."""
+    stats: dict[str, dict] = {}
+    for agent in run.agents:
+        stats[agent.agent_id] = {
+            "name": _display_label(agent),
+            "prompt_tok": 0,
+            "completion_tok": 0,
+            "total_tok": 0,
+            "cost": 0.0,
+            "critiques": 0,
+            "defenses": 0,
+            "concessions": 0,
+            "hybrids": 0,
+            "total_claims": 0,
+            "adopted_claims": 0,
+            "novelty_scores": [],
+        }
+
+    # Accumulate from budget ledger
+    for actor_id, usage in run.budget_ledger.by_actor.items():
+        if actor_id in stats:
+            stats[actor_id]["prompt_tok"] = usage.prompt_tokens
+            stats[actor_id]["completion_tok"] = usage.completion_tokens
+            stats[actor_id]["total_tok"] = usage.total_tokens
+            stats[actor_id]["cost"] = usage.estimated_cost_usd
+
+    # Accumulate from debate round messages
+    for dr in run.debate_rounds:
+        for msg in dr.messages:
+            s = stats.get(msg.agent_id)
+            if not s:
+                continue
+            s["critiques"] += len(msg.critique_points)
+            s["defenses"] += len(msg.defense_points)
+            s["concessions"] += len(msg.concessions)
+            s["hybrids"] += len(msg.hybrid_suggestions)
+            s["total_claims"] += len(msg.critique_points) + len(msg.defense_points)
+            s["novelty_scores"].append(msg.novelty_score)
+
+        # Count adopted arguments per agent from adjudication
+        if dr.adjudication:
+            for adopted in dr.adjudication.adopted_arguments:
+                s = stats.get(adopted.agent_id)
+                if s:
+                    s["adopted_claims"] += 1
+
+    result = []
+    for stat in stats.values():
+        total = stat["total_claims"]
+        adopted = stat["adopted_claims"]
+        stat["adoption_pct"] = (adopted / total * 100) if total > 0 else 0.0
+        scores = stat.pop("novelty_scores")
+        stat["novelty_avg"] = sum(scores) / len(scores) if scores else 0.0
+        result.append(stat)
+    return result
+
+
 def _verdict(run):
     v = run.verdict
     if not v:
@@ -1965,14 +2023,41 @@ def _verdict(run):
         print(f"\n    {MAGENTA}Merged Plan:{RST}")
         print(_wrap(v.synthesized_plan.summary, indent=6))
 
-    # Token usage per agent
-    if run.budget_ledger.by_actor:
-        print(f"\n    {DIM}Token usage:{RST}")
-        for actor_id, usage in run.budget_ledger.by_actor.items():
-            agent = next((a for a in run.agents if a.agent_id == actor_id), None)
-            name = _display_label(agent) if agent else actor_id
-            cost_str = f"  ${usage.estimated_cost_usd:.4f}" if usage.estimated_cost_usd > 0 else ""
-            print(f"      {DIM}{name}: {usage.total_tokens} tok{cost_str}{RST}")
+    # Per-agent detailed statistics
+    agent_stats = _compute_agent_stats(run)
+    if agent_stats:
+        print(f"\n  {BOLD}Agent Statistics{RST}")
+        print(f"  {'─' * 58}")
+        for stat in agent_stats:
+            cost_str = f"${stat['cost']:.4f}" if stat["cost"] > 0 else "—"
+            print(
+                f"    {CYAN}{BOLD}{stat['name']}{RST}"
+            )
+            print(
+                f"      Tokens: {stat['prompt_tok']:,} prompt + {stat['completion_tok']:,} completion"
+                f" = {BOLD}{stat['total_tok']:,}{RST}  Cost: {cost_str}"
+            )
+            parts = []
+            if stat["critiques"]:
+                parts.append(f"{stat['critiques']} critiques")
+            if stat["defenses"]:
+                parts.append(f"{stat['defenses']} defenses")
+            if stat["concessions"]:
+                parts.append(f"{stat['concessions']} concessions")
+            if stat["hybrids"]:
+                parts.append(f"{stat['hybrids']} hybrid ideas")
+            if parts:
+                print(f"      Arguments: {' · '.join(parts)}")
+            adoption_pct = stat["adoption_pct"]
+            novelty_avg = stat["novelty_avg"]
+            bar_len = 12
+            filled = int(adoption_pct / 100 * bar_len)
+            bar = f"{GREEN}{'|' * filled}{DIM}{'.' * (bar_len - filled)}{RST}"
+            print(
+                f"      Adoption: {bar} {adoption_pct:.0f}%"
+                f"  Novelty: {novelty_avg:.2f}"
+            )
+        print(f"  {'─' * 58}")
 
     total_tok = run.budget_ledger.total.total_tokens
     total_cost = run.budget_ledger.total.estimated_cost_usd
@@ -2145,6 +2230,7 @@ _PHASE_LETTER_MAP = {
     "C": ReviewPhase.ARCHITECTURE,
     "D": ReviewPhase.SECURITY_PERFORMANCE,
     "E": ReviewPhase.TEST_COVERAGE,
+    "F": ReviewPhase.RED_TEAM,
 }
 
 _SEVERITY_COLORS = {
@@ -2154,6 +2240,115 @@ _SEVERITY_COLORS = {
     ReviewSeverity.LOW: CYAN,
     ReviewSeverity.INFO: DIM,
 }
+
+
+def _render_review_report_md(report) -> str:
+    """Render a ReviewReport as a Markdown string."""
+    lines: list[str] = []
+    lines.append(f"# Code Review Report")
+    lines.append("")
+    lines.append(f"- **Review ID**: `{report.review_id}`")
+    lines.append(f"- **Created**: {report.created_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
+    lines.append(f"- **Target**: {report.target_description}")
+    lines.append(f"- **Phases**: {len(report.phase_results)}")
+    if report.reviewed_paths:
+        lines.append(f"- **Reviewed Paths**: {', '.join(f'`{p}`' for p in report.reviewed_paths)}")
+    if report.git_diff_included:
+        lines.append(f"- **Git Diff**: included")
+    lines.append("")
+
+    # Severity summary
+    lines.append("## Summary")
+    lines.append("")
+    lines.append(f"| Severity | Count |")
+    lines.append(f"|----------|-------|")
+    lines.append(f"| Critical | {report.critical_count} |")
+    lines.append(f"| High     | {report.high_count} |")
+    lines.append(f"| Medium   | {report.medium_count} |")
+    lines.append(f"| Low      | {report.low_count} |")
+    info_count = report.total_findings - report.critical_count - report.high_count - report.medium_count - report.low_count
+    if info_count > 0:
+        lines.append(f"| Info     | {info_count} |")
+    lines.append(f"| **Total** | **{report.total_findings}** |")
+    lines.append("")
+
+    if report.overall_summary:
+        lines.append(report.overall_summary)
+        lines.append("")
+
+    # Top recommendations
+    if report.top_recommendations:
+        lines.append("## Top Recommendations")
+        lines.append("")
+        for i, rec in enumerate(report.top_recommendations, 1):
+            lines.append(f"{i}. {rec}")
+        lines.append("")
+
+    # Phase results
+    for pr in report.phase_results:
+        lines.append(f"## {pr.phase_label}")
+        lines.append("")
+        if pr.verdict_type:
+            lines.append(f"- **Verdict**: {pr.verdict_type.value} (confidence: {pr.confidence:.2f})")
+        tok = pr.usage.total_tokens
+        cost = pr.usage.estimated_cost_usd
+        cost_str = f" (${cost:.4f})" if cost > 0 else ""
+        lines.append(f"- **Tokens**: {tok:,}{cost_str}")
+        lines.append("")
+
+        if pr.phase_summary:
+            lines.append(pr.phase_summary)
+            lines.append("")
+
+        if pr.findings:
+            lines.append("### Findings")
+            lines.append("")
+            for f in pr.findings:
+                severity_icon = {
+                    "critical": "🔴",
+                    "high": "🟠",
+                    "medium": "🟡",
+                    "low": "🔵",
+                    "info": "⚪",
+                }.get(f.severity.value, "⚪")
+                lines.append(f"#### {severity_icon} [{f.severity.value.upper()}] {f.title}")
+                lines.append("")
+                if f.description and f.description != f.title:
+                    lines.append(f.description)
+                    lines.append("")
+                if f.file_path:
+                    loc = f"`{f.file_path}"
+                    if f.line_range:
+                        loc += f":{f.line_range}"
+                    loc += "`"
+                    lines.append(f"- **Location**: {loc}")
+                if f.recommendation:
+                    lines.append(f"- **Recommendation**: {f.recommendation}")
+                lines.append("")
+
+    # Usage footer
+    total_tok = report.total_usage.total_tokens
+    total_cost = report.total_usage.estimated_cost_usd
+    lines.append("---")
+    lines.append("")
+    cost_str = f" (${total_cost:.4f})" if total_cost > 0 else ""
+    lines.append(f"*Total tokens: {total_tok:,}{cost_str} | Generated by Colosseum Code Review*")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+def _save_review_report(report) -> str:
+    """Save a ReviewReport as a Markdown file. Returns the file path."""
+    from colosseum.core.config import REVIEW_REPORT_ROOT
+
+    REVIEW_REPORT_ROOT.mkdir(parents=True, exist_ok=True)
+    ts = report.created_at.strftime("%Y%m%d_%H%M%S")
+    filename = f"review_{ts}_{report.review_id[:8]}.md"
+    path = REVIEW_REPORT_ROOT / filename
+    md = _render_review_report_md(report)
+    path.write_text(md, encoding="utf-8")
+    return str(path)
 
 
 def _review_phase_header(label: str, index: int, total: int):
@@ -2226,6 +2421,8 @@ def cmd_review(args: argparse.Namespace) -> None:
     diff_flag = getattr(args, "diff", False)
     rules_path = getattr(args, "rules", None)
     phase_letters = getattr(args, "phases", None)
+    timeout_seconds = args.timeout or 0
+    response_language = getattr(args, "lang", None) or "auto"
 
     # --mock flag
     if args.mock:
@@ -2265,10 +2462,10 @@ def cmd_review(args: argparse.Namespace) -> None:
             if upper in _PHASE_LETTER_MAP:
                 phases.append(_PHASE_LETTER_MAP[upper])
             else:
-                print(f"  {RED}Unknown phase '{letter}'. Use A, B, C, D, or E.{RST}\n")
+                print(f"  {RED}Unknown phase '{letter}'. Use A, B, C, D, E, or F.{RST}\n")
                 sys.exit(1)
     else:
-        phases = list(ReviewPhase)
+        phases = [p for p in ReviewPhase if p != ReviewPhase.RED_TEAM]
 
     # Git diff
     git_diff = None
@@ -2371,10 +2568,13 @@ def cmd_review(args: argparse.Namespace) -> None:
             per_agent_message_limit=1,
             min_novelty_threshold=profile["min_novelty_threshold"],
             convergence_threshold=profile["convergence_threshold"],
+            planning_timeout_seconds=timeout_seconds,
+            round_timeout_seconds=timeout_seconds,
         ),
         phases=phases,
         git_diff=git_diff,
         rules_context=rules_context,
+        response_language=response_language,
     )
 
     orch = get_review_orchestrator()
@@ -2382,7 +2582,9 @@ def cmd_review(args: argparse.Namespace) -> None:
     if json_output:
         import json as _json
         report = asyncio.run(orch.run_review(request))
+        report_path = _save_review_report(report)
         print(_json.dumps(report.model_dump(mode="json"), indent=2, default=str))
+        sys.stderr.write(f"Report saved: {report_path}\n")
         return
 
     # Print header
@@ -2396,6 +2598,12 @@ def cmd_review(args: argparse.Namespace) -> None:
         print(f"  {BOLD}Diff:{RST} included ({len(git_diff)} chars)")
     if rules_context:
         print(f"  {BOLD}Rules:{RST} loaded ({len(rules_context)} chars)")
+    if timeout_seconds:
+        print(f"  {BOLD}Timeout:{RST} {timeout_seconds}s per phase")
+    else:
+        print(f"  {BOLD}Timeout:{RST} none")
+    if response_language != "auto":
+        print(f"  {BOLD}Language:{RST} {response_language}")
     print(f"  {BOLD}Gladiators:{RST}")
     for a in agents:
         print(f"    {GOLD}{_display_label(a)}{RST}")
@@ -2409,6 +2617,7 @@ async def _run_review_live(orch, request) -> None:
     """Run review with live streaming output per phase."""
     try:
         review_complete_data = None
+        review_report = None
         spinner = _Spinner()
         pending_inner = 0
         async for event_type, event_data in orch.run_review_streaming(request):
@@ -2466,8 +2675,10 @@ async def _run_review_live(orch, request) -> None:
             elif event_type == "review_complete":
                 spinner.stop()
                 review_complete_data = event_data
+            elif event_type == "_review_report":
+                review_report = event_data
 
-        # Print final summary using the streaming report
+        # Print final summary
         if review_complete_data:
             total = review_complete_data.get("total_findings", 0)
             print(f"\n  {'=' * 60}")
@@ -2490,6 +2701,14 @@ async def _run_review_live(orch, request) -> None:
             if summary:
                 print(f"\n    {BOLD}Summary:{RST}")
                 print(_wrap(summary[:500], indent=6))
+
+        # Save report to markdown file
+        if review_report:
+            try:
+                report_path = _save_review_report(review_report)
+                print(f"\n    {GREEN}{BOLD}Report saved:{RST} {report_path}")
+            except Exception as save_exc:
+                print(f"\n    {GOLD}Warning: could not save report: {save_exc}{RST}")
             print()
 
     except Exception as exc:
@@ -2751,7 +2970,20 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="+",
         default=None,
         metavar="PHASE",
-        help="Review phases to run: A (rules) B (impl) C (arch) D (security) E (tests). Default: all",
+        help="Review phases: A (rules) B (impl) C (arch) D (security) E (tests) F (red-team). Default: A-E",
+    )
+    p_review.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help="Time limit per phase in seconds. Omit for no limit.",
+    )
+    p_review.add_argument(
+        "--lang",
+        default=None,
+        metavar="LANGUAGE",
+        help="Response language (e.g. ko, en, ja). Default: auto-detect.",
     )
     p_review.add_argument(
         "-j",
