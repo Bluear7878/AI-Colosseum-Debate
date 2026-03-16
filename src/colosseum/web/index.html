@@ -207,21 +207,19 @@
     </div>
 
     <div id="timeout-section" class="timeout-section">
-      <label class="label">Timeout Settings</label>
-      <p class="timeout-hint">Set per-phase time limits. Check "No limit" to let a phase run as long as it needs.</p>
+      <label class="label">Timeout</label>
       <div class="timeout-rows">
         <div class="timeout-row">
-          <span class="timeout-label">Planning</span>
+          <span class="timeout-label">Per phase</span>
           <div class="timeout-input-wrap">
-            <input id="planning-timeout" type="number" min="30" max="3600" step="30" class="arena-input-sm timeout-input"/>
+            <input id="timeout-input" type="number" min="30" max="3600" step="30" class="arena-input-sm timeout-input" disabled/>
             <span class="timeout-unit">sec</span>
           </div>
           <label class="timeout-nolimit-label">
-            <input id="planning-nolimit" type="checkbox" class="timeout-nolimit"/>
+            <input id="timeout-nolimit" type="checkbox" class="timeout-nolimit" checked/>
             <span>No limit</span>
           </label>
         </div>
-        <div id="round-timeout-rows"></div>
       </div>
     </div>
 

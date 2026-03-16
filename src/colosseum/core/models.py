@@ -669,10 +669,10 @@ class BudgetPolicy(BaseModel):
     per_agent_message_limit: int = 1
     min_novelty_threshold: float = 0.18
     convergence_threshold: float = 0.75
-    planning_timeout_seconds: int = 360
-    round_timeout_seconds: int = 300
+    planning_timeout_seconds: int = 0
+    round_timeout_seconds: int = 0
     late_round_timeout_factor: float = 0.8
-    min_round_timeout_seconds: int = 120
+    min_round_timeout_seconds: int = 0
     per_round_timeouts: list[int] = Field(default_factory=list)
 
     @model_validator(mode="after")

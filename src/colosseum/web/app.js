@@ -1069,89 +1069,23 @@ var DEPTH_LABELS = {
   5: "Deep Dive"
 };
 var DEPTH_PROFILES = {
-  1: { min_novelty: 0.05, convergence: 0.40, confidence: 0.55, planning_timeout: 240, round_timeout: 180, decay: 0.80, min_rounds: 1 },
-  2: { min_novelty: 0.10, convergence: 0.55, confidence: 0.65, planning_timeout: 300, round_timeout: 240, decay: 0.80, min_rounds: 1 },
-  3: { min_novelty: 0.18, convergence: 0.75, confidence: 0.78, planning_timeout: 360, round_timeout: 300, decay: 0.80, min_rounds: 1 },
-  4: { min_novelty: 0.25, convergence: 0.85, confidence: 0.85, planning_timeout: 420, round_timeout: 360, decay: 0.80, min_rounds: 2 },
-  5: { min_novelty: 0.30, convergence: 0.92, confidence: 0.92, planning_timeout: 480, round_timeout: 420, decay: 0.80, min_rounds: 2 }
+  1: { min_novelty: 0.05, convergence: 0.40, confidence: 0.55, min_rounds: 1 },
+  2: { min_novelty: 0.10, convergence: 0.55, confidence: 0.65, min_rounds: 1 },
+  3: { min_novelty: 0.18, convergence: 0.75, confidence: 0.78, min_rounds: 1 },
+  4: { min_novelty: 0.25, convergence: 0.85, confidence: 0.85, min_rounds: 2 },
+  5: { min_novelty: 0.30, convergence: 0.92, confidence: 0.92, min_rounds: 2 }
 };
-var planningTimeoutInput = document.getElementById("planning-timeout");
-var planningNolimit = document.getElementById("planning-nolimit");
-var roundTimeoutContainer = document.getElementById("round-timeout-rows");
+var timeoutInput = document.getElementById("timeout-input");
+var timeoutNolimit = document.getElementById("timeout-nolimit");
 
-/* Per-round timeout state */
-var roundTimeoutInputs = [];  // [{input, nolimit}]
-
-function buildRoundTimeoutRows(numRounds) {
-  roundTimeoutContainer.innerHTML = "";
-  roundTimeoutInputs = [];
-  var v = parseInt(depthSlider.value);
-  var profile = DEPTH_PROFILES[v] || DEPTH_PROFILES[3];
-  for (var i = 1; i <= numRounds; i++) {
-    var timeout = Math.max(60, Math.round(profile.round_timeout * Math.pow(profile.decay, i - 1)));
-    var row = document.createElement("div");
-    row.className = "timeout-row";
-    var label = document.createElement("span");
-    label.className = "timeout-label";
-    label.textContent = "Round " + i;
-    var wrap = document.createElement("div");
-    wrap.className = "timeout-input-wrap";
-    var inp = document.createElement("input");
-    inp.type = "number";
-    inp.min = "30";
-    inp.max = "3600";
-    inp.step = "30";
-    inp.value = timeout;
-    inp.className = "arena-input-sm timeout-input";
-    inp.id = "round-timeout-" + i;
-    var unit = document.createElement("span");
-    unit.className = "timeout-unit";
-    unit.textContent = "sec";
-    wrap.appendChild(inp);
-    wrap.appendChild(unit);
-    var nlLabel = document.createElement("label");
-    nlLabel.className = "timeout-nolimit-label";
-    var nlCheck = document.createElement("input");
-    nlCheck.type = "checkbox";
-    nlCheck.className = "timeout-nolimit";
-    nlCheck.id = "round-nolimit-" + i;
-    var nlSpan = document.createElement("span");
-    nlSpan.textContent = "No limit";
-    nlLabel.appendChild(nlCheck);
-    nlLabel.appendChild(nlSpan);
-    (function(input, check) {
-      check.addEventListener("change", function() {
-        input.disabled = check.checked;
-      });
-    })(inp, nlCheck);
-    row.appendChild(label);
-    row.appendChild(wrap);
-    row.appendChild(nlLabel);
-    roundTimeoutContainer.appendChild(row);
-    roundTimeoutInputs.push({ input: inp, nolimit: nlCheck });
-  }
-}
-
-function syncTimeoutDefaults() {
-  var v = parseInt(depthSlider.value);
-  var profile = DEPTH_PROFILES[v] || DEPTH_PROFILES[3];
-  planningTimeoutInput.value = profile.planning_timeout;
-  planningNolimit.checked = false;
-  planningTimeoutInput.disabled = false;
-  buildRoundTimeoutRows(v);
-}
-
-planningNolimit.addEventListener("change", function() {
-  planningTimeoutInput.disabled = planningNolimit.checked;
+timeoutNolimit.addEventListener("change", function() {
+  timeoutInput.disabled = timeoutNolimit.checked;
 });
 
 depthSlider.addEventListener("input", function() {
   var v = parseInt(depthSlider.value);
   depthVal.textContent = v + (v === 1 ? " round" : " rounds") + " — " + (DEPTH_LABELS[v] || "");
-  syncTimeoutDefaults();
 });
-
-syncTimeoutDefaults();
 
 /* ── Mode toggle ── */
 var modeLive = document.getElementById("mode-live");
@@ -2103,23 +2037,21 @@ function buildPayload() {
     },
     paid_provider_policy: buildPaidProviderPolicy(),
     budget_policy: (function() {
-      var planTimeout = planningNolimit.checked ? 0 : (parseInt(planningTimeoutInput.value) || (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).planning_timeout);
-      var perRound = roundTimeoutInputs.map(function(r) {
-        return r.nolimit.checked ? 0 : (parseInt(r.input.value) || 300);
-      });
+      var t = timeoutNolimit.checked ? 0 : (parseInt(timeoutInput.value) || 0);
+      var profile = DEPTH_PROFILES[depth] || DEPTH_PROFILES[3];
       return {
         max_rounds: depth,
-        min_rounds: (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).min_rounds,
+        min_rounds: profile.min_rounds,
         total_token_budget: 80000,
         per_round_token_limit: 12000,
         per_agent_message_limit: 1,
-        min_novelty_threshold: (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).min_novelty,
-        convergence_threshold: (DEPTH_PROFILES[depth] || DEPTH_PROFILES[3]).convergence,
-        planning_timeout_seconds: planTimeout,
-        round_timeout_seconds: perRound[0] || 300,
+        min_novelty_threshold: profile.min_novelty,
+        convergence_threshold: profile.convergence,
+        planning_timeout_seconds: t,
+        round_timeout_seconds: t,
         late_round_timeout_factor: 0.8,
         min_round_timeout_seconds: 0,
-        per_round_timeouts: perRound
+        per_round_timeouts: []
       };
     })()
   };
