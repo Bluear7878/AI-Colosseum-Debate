@@ -561,13 +561,163 @@ function toast(msg) {
 }
 
 function resetPersonaSelectValue(gid) {
+  // Update the persona chip button label for this gladiator
   if (!gid) return;
-  var sel = document.querySelector('.persona-select[data-gid="' + gid + '"]');
-  if (!sel) return;
+  var btn = document.querySelector('.persona-chip-btn[data-gid="' + gid + '"]');
+  if (!btn) return;
   var persona = gladiatorPersonas[gid];
-  if (persona && persona.persona_id && persona.persona_id !== "__custom__") sel.value = persona.persona_id;
-  else sel.value = "";
+  if (persona) {
+    btn.textContent = persona.persona_name || "Custom";
+    btn.classList.add("persona-active");
+  } else {
+    btn.textContent = "Persona";
+    btn.classList.remove("persona-active");
+  }
 }
+
+/* ── Persona Picker Modal ── */
+var _pickerTargetGid = null;
+var _pickerPreviewId = null;
+
+function openPersonaPicker(gid) {
+  _pickerTargetGid = gid;
+  _pickerPreviewId = null;
+  var listEl = document.getElementById("persona-picker-list");
+  var previewEl = document.getElementById("persona-picker-preview");
+  listEl.classList.remove("hidden");
+  previewEl.classList.add("hidden");
+
+  var currentId = gladiatorPersonas[gid] ? gladiatorPersonas[gid].persona_id : null;
+
+  var html = '';
+  // Group: Built-in
+  var builtins = availablePersonas.filter(function(p) { return p.source !== "custom"; });
+  var customs = availablePersonas.filter(function(p) { return p.source === "custom"; });
+
+  if (builtins.length) {
+    html += '<div class="pp-group-label">Built-in Personas</div>';
+    html += '<div class="pp-grid">';
+    builtins.forEach(function(p) {
+      var active = currentId === p.persona_id ? ' pp-item-active' : '';
+      html += '<div class="pp-item' + active + '" data-pid="' + esc(p.persona_id) + '">';
+      html += '<div class="pp-item-name">' + esc(p.name) + '</div>';
+      if (p.description) html += '<div class="pp-item-desc">' + esc(p.description.slice(0, 60)) + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  if (customs.length) {
+    html += '<div class="pp-group-label">Custom Personas</div>';
+    html += '<div class="pp-grid">';
+    customs.forEach(function(p) {
+      var active = currentId === p.persona_id ? ' pp-item-active' : '';
+      html += '<div class="pp-item pp-item-custom' + active + '" data-pid="' + esc(p.persona_id) + '">';
+      html += '<div class="pp-item-name">' + esc(p.name) + '</div>';
+      if (p.description) html += '<div class="pp-item-desc">' + esc(p.description.slice(0, 60)) + '</div>';
+      html += '</div>';
+    });
+    html += '</div>';
+  }
+
+  if (!builtins.length && !customs.length) {
+    html += '<div class="pp-empty">No personas available. Create one below.</div>';
+  }
+
+  listEl.innerHTML = html;
+
+  // Click handler for items → show preview
+  listEl.querySelectorAll(".pp-item").forEach(function(item) {
+    item.addEventListener("click", function() {
+      showPersonaPreview(item.dataset.pid);
+    });
+  });
+
+  show("persona-picker-modal");
+}
+
+function showPersonaPreview(personaId) {
+  _pickerPreviewId = personaId;
+  var listEl = document.getElementById("persona-picker-list");
+  var previewEl = document.getElementById("persona-picker-preview");
+  var titleEl = document.getElementById("pp-preview-title");
+  var bodyEl = document.getElementById("pp-preview-body");
+
+  var meta = personaMetaById(personaId);
+  titleEl.textContent = meta ? meta.name : humanizePersonaId(personaId);
+  bodyEl.innerHTML = '<div class="pp-loading">Loading...</div>';
+  listEl.classList.add("hidden");
+  previewEl.classList.remove("hidden");
+
+  api("/personas/" + personaId).then(function(data) {
+    // Simple markdown-to-html: headings, blockquotes, lists, paragraphs
+    var content = data.content || "";
+    var lines = content.split("\n");
+    var htmlOut = "";
+    lines.forEach(function(line) {
+      var trimmed = line.trim();
+      if (/^#{1,3}\s/.test(trimmed)) {
+        var level = trimmed.match(/^(#+)/)[1].length;
+        htmlOut += '<h' + (level + 2) + ' class="pp-h">' + esc(trimmed.replace(/^#+\s*/, "")) + '</h' + (level + 2) + '>';
+      } else if (/^>\s?/.test(trimmed)) {
+        htmlOut += '<blockquote class="pp-bq">' + esc(trimmed.replace(/^>\s?/, "")) + '</blockquote>';
+      } else if (/^[-*]\s/.test(trimmed)) {
+        htmlOut += '<div class="pp-li">' + esc(trimmed.replace(/^[-*]\s/, "")) + '</div>';
+      } else if (trimmed) {
+        htmlOut += '<p class="pp-p">' + esc(trimmed) + '</p>';
+      }
+    });
+    bodyEl.innerHTML = htmlOut;
+  }).catch(function() {
+    bodyEl.innerHTML = '<div class="pp-error">Failed to load persona.</div>';
+  });
+}
+
+// Picker button handlers
+document.getElementById("pp-back-btn").addEventListener("click", function() {
+  document.getElementById("persona-picker-list").classList.remove("hidden");
+  document.getElementById("persona-picker-preview").classList.add("hidden");
+  _pickerPreviewId = null;
+});
+
+document.getElementById("pp-select-btn").addEventListener("click", function() {
+  if (!_pickerPreviewId || !_pickerTargetGid) return;
+  api("/personas/" + _pickerPreviewId).then(function(data) {
+    var meta = personaMetaById(_pickerPreviewId);
+    gladiatorPersonas[_pickerTargetGid] = {
+      persona_id: _pickerPreviewId,
+      persona_name: meta ? meta.name : humanizePersonaId(_pickerPreviewId),
+      persona_content: data.content
+    };
+    resetPersonaSelectValue(_pickerTargetGid);
+    toast("Persona applied.");
+    hide("persona-picker-modal");
+  }).catch(function() { toast("Failed to load persona."); });
+});
+
+document.getElementById("pp-clear-btn").addEventListener("click", function() {
+  if (_pickerTargetGid) {
+    delete gladiatorPersonas[_pickerTargetGid];
+    resetPersonaSelectValue(_pickerTargetGid);
+    toast("Persona removed.");
+  }
+  hide("persona-picker-modal");
+});
+
+document.getElementById("pp-write-btn").addEventListener("click", function() {
+  hide("persona-picker-modal");
+  openPersonaModal(_pickerTargetGid);
+});
+
+
+document.getElementById("pp-cancel-btn").addEventListener("click", function() {
+  hide("persona-picker-modal");
+});
+
+// Close picker on overlay click
+document.querySelector("#persona-picker-modal .modal-overlay").addEventListener("click", function() {
+  hide("persona-picker-modal");
+});
 
 function personaMetaById(personaId) {
   return (availablePersonas || []).find(function(p) { return p.persona_id === personaId; }) || null;
@@ -725,28 +875,10 @@ function createGladiatorCard(g) {
     html += '<div class="card-gpu-selector hidden" data-gid="' + esc(g.id) + '"></div>';
   }
 
-  // Persona select
-  html += '<select class="persona-select" data-gid="' + esc(g.id) + '" title="Assign a debating persona"' + (isDisabled ? ' disabled' : '') + '>';
-  html += '<option value="">-- Persona --</option>';
-  var hasBuiltin = false;
-  var hasCustom = false;
-  availablePersonas.forEach(function(p) {
-    if (p.source === "custom" && !hasCustom) {
-      hasCustom = true;
-      if (hasBuiltin) html += '<option disabled>───────</option>';
-      html += '<option disabled>Custom Personas</option>';
-    } else if (p.source !== "custom" && !hasBuiltin) {
-      hasBuiltin = true;
-    }
-    var selAttr = (gladiatorPersonas[g.id] && gladiatorPersonas[g.id].persona_id === p.persona_id) ? ' selected' : '';
-    var label = p.name;
-    if (p.description) label += ' - ' + p.description.slice(0, 40);
-    html += '<option value="' + esc(p.persona_id) + '"' + selAttr + ' title="' + esc(p.description || '') + '">' + esc(label) + '</option>';
-  });
-  html += '<option disabled>───────</option>';
-  html += '<option value="__generate__">+ Build From Profile...</option>';
-  html += '<option value="__custom__">+ Write Custom...</option>';
-  html += '</select>';
+  // Persona button
+  var persona = gladiatorPersonas[g.id];
+  var pLabel = persona ? esc(persona.persona_name || "Custom") : "Persona";
+  html += '<button class="persona-chip-btn' + (persona ? ' persona-active' : '') + '" data-gid="' + esc(g.id) + '"' + (isDisabled ? ' disabled' : '') + '>' + pLabel + '</button>';
 
   if (authBlocked) {
     var toolName = CLI_GROUP_TOOL_MAP[g.id];
@@ -802,32 +934,14 @@ function createGladiatorCard(g) {
     }
   });
 
-  // Persona change
-  var perSel = card.querySelector(".persona-select");
-  perSel.addEventListener("change", function() {
-    var val = perSel.value;
-    if (val === "__generate__") {
-      openPersonaBuilderModal(g.id);
-    } else if (val === "__custom__") {
-      openPersonaModal(g.id);
-    } else if (val) {
-      // Fetch persona content
-      api("/personas/" + val).then(function(data) {
-        var meta = personaMetaById(val);
-        gladiatorPersonas[g.id] = {
-          persona_id: val,
-          persona_name: meta ? meta.name : humanizePersonaId(val),
-          persona_content: data.content
-        };
-      }).catch(function() {
-        toast("Failed to load persona.");
-        perSel.value = "";
-        delete gladiatorPersonas[g.id];
-      });
-    } else {
-      delete gladiatorPersonas[g.id];
-    }
-  });
+  // Persona picker
+  var pBtn = card.querySelector(".persona-chip-btn");
+  if (pBtn) {
+    pBtn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      openPersonaPicker(g.id);
+    });
+  }
 
   return card;
 }
@@ -840,20 +954,13 @@ function createCustomCard(m) {
   var html = '<div class="gladiator-icon">\u2699\uFE0F</div>';
   html += '<div class="gladiator-name">' + esc(m.name) + '</div>';
   html += '<div style="font-size:0.72rem;color:var(--sand-muted)">' + esc(m.desc) + '</div>';
-  html += '<select class="persona-select" data-gid="' + esc(m.id) + '">';
-  html += '<option value="">-- Persona --</option>';
-  availablePersonas.forEach(function(p) {
-    var selAttr = (gladiatorPersonas[m.id] && gladiatorPersonas[m.id].persona_id === p.persona_id) ? ' selected' : '';
-    html += '<option value="' + esc(p.persona_id) + '"' + selAttr + '>' + esc(p.name) + '</option>';
-  });
-  html += '<option disabled>───────</option>';
-  html += '<option value="__generate__">+ Build From Profile...</option>';
-  html += '<option value="__custom__">+ Write Custom...</option>';
-  html += '</select>';
+  var persona = gladiatorPersonas[m.id];
+  var pLabel = persona ? esc(persona.persona_name || "Custom") : "Persona";
+  html += '<button class="persona-chip-btn' + (persona ? ' persona-active' : '') + '" data-gid="' + esc(m.id) + '">' + pLabel + '</button>';
 
   card.innerHTML = html;
   card.addEventListener("click", function(e) {
-    if (e.target.tagName === "SELECT" || e.target.tagName === "OPTION") return;
+    if (e.target.tagName === "BUTTON") return;
     if (selectedGladiators[m.id]) {
       delete selectedGladiators[m.id];
     } else {
@@ -862,30 +969,13 @@ function createCustomCard(m) {
     card.classList.toggle("selected", !!selectedGladiators[m.id]);
   });
 
-  var perSel = card.querySelector(".persona-select");
-  perSel.addEventListener("change", function() {
-    var val = perSel.value;
-    if (val === "__generate__") {
-      openPersonaBuilderModal(m.id);
-    } else if (val === "__custom__") {
-      openPersonaModal(m.id);
-    } else if (val) {
-      api("/personas/" + val).then(function(data) {
-        var meta = personaMetaById(val);
-        gladiatorPersonas[m.id] = {
-          persona_id: val,
-          persona_name: meta ? meta.name : humanizePersonaId(val),
-          persona_content: data.content
-        };
-      }).catch(function() {
-        toast("Failed to load persona.");
-        perSel.value = "";
-        delete gladiatorPersonas[m.id];
-      });
-    } else {
-      delete gladiatorPersonas[m.id];
-    }
-  });
+  var pBtn = card.querySelector(".persona-chip-btn");
+  if (pBtn) {
+    pBtn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      openPersonaPicker(m.id);
+    });
+  }
 
   return card;
 }
@@ -1017,6 +1107,9 @@ syncCustomModelForm();
 
 document.getElementById("build-persona-btn").addEventListener("click", function() {
   openPersonaBuilderModal(null);
+});
+document.getElementById("chat-persona-btn").addEventListener("click", function() {
+  openChatPersonaModal();
 });
 
 document.getElementById("back-to-setup").addEventListener("click", function() {
@@ -1592,15 +1685,297 @@ function openPersonaModalWithDraft(name, content, gid) {
   show("persona-modal");
 }
 
+/* ── Persona Interview ── */
+var _interviewMessages = [];
+var _interviewTarget = null;
+var _interviewRunning = false;
+
 function openPersonaBuilderModal(gid) {
-  personaBuilderTarget = gid || null;
-  document.getElementById("builder-persona-name").value = "";
-  document.getElementById("builder-profession").value = "";
-  document.getElementById("builder-personality").value = "";
-  document.getElementById("builder-style").value = "";
-  document.getElementById("builder-notes").value = "";
-  show("persona-builder-modal");
+  _interviewTarget = gid || null;
+  _interviewMessages = [];
+  _interviewRunning = false;
+  document.getElementById("interview-messages").innerHTML =
+    '<div class="interview-hint">Choose an AI model and click Start Interview.</div>';
+  document.getElementById("interview-input").value = "";
+  document.getElementById("interview-input").disabled = true;
+  document.getElementById("interview-send-btn").disabled = true;
+  document.getElementById("interview-start-btn").classList.remove("hidden");
+  _populateInterviewModelSelect();
+  show("persona-interview-modal");
 }
+
+function _populateInterviewModelSelect() {
+  var sel = document.getElementById("interview-model");
+  var html = "";
+  GLADIATORS.forEach(function(g) {
+    (g.variants || []).forEach(function(v) {
+      var spec = _gladiatorToProviderPrefix(g.id) + ":" + v.model;
+      html += '<option value="' + esc(spec) + '">' + esc(g.name + " — " + v.label) + '</option>';
+    });
+  });
+  sel.innerHTML = html;
+}
+
+function _gladiatorToProviderPrefix(gid) {
+  if (gid === "openai") return "codex";
+  return gid;
+}
+
+function _appendInterviewMessage(role, text) {
+  var messagesEl = document.getElementById("interview-messages");
+  var div = document.createElement("div");
+  div.className = "interview-msg interview-msg-" + role;
+  div.textContent = text;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function _sendInterviewStep() {
+  if (_interviewRunning) return;
+  _interviewRunning = true;
+  var sendBtn = document.getElementById("interview-send-btn");
+  var input = document.getElementById("interview-input");
+  sendBtn.disabled = true;
+  input.disabled = true;
+
+  var model = document.getElementById("interview-model").value;
+  _appendInterviewMessage("assistant", "...");
+
+  api("/personas/interview", {
+    method: "POST",
+    body: JSON.stringify({ model: model, messages: _interviewMessages })
+  }).then(function(data) {
+    // Remove the "..." placeholder
+    var messagesEl = document.getElementById("interview-messages");
+    var lastMsg = messagesEl.lastElementChild;
+    if (lastMsg && lastMsg.textContent === "...") messagesEl.removeChild(lastMsg);
+
+    if (data.done && data.persona) {
+      _appendInterviewMessage("assistant", "Your persona is ready!");
+      _interviewRunning = false;
+      setTimeout(function() {
+        hide("persona-interview-modal");
+        openPersonaModalWithDraft(
+          data.persona.name || "",
+          data.persona.content || "",
+          _interviewTarget
+        );
+        toast("Persona drafted! Review and save it.");
+      }, 800);
+    } else {
+      _interviewMessages.push({ role: "assistant", content: data.message });
+      _appendInterviewMessage("assistant", data.message);
+      _interviewRunning = false;
+      input.disabled = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }).catch(function(e) {
+    var messagesEl = document.getElementById("interview-messages");
+    var lastMsg = messagesEl.lastElementChild;
+    if (lastMsg && lastMsg.textContent === "...") messagesEl.removeChild(lastMsg);
+    _appendInterviewMessage("assistant", "Error: " + (e.message || "Something went wrong."));
+    _interviewRunning = false;
+    input.disabled = false;
+    sendBtn.disabled = false;
+  });
+}
+
+document.getElementById("interview-start-btn").addEventListener("click", function() {
+  _interviewMessages = [];
+  document.getElementById("interview-messages").innerHTML = "";
+  document.getElementById("interview-start-btn").classList.add("hidden");
+  document.getElementById("interview-model").disabled = true;
+  _sendInterviewStep();
+});
+
+document.getElementById("interview-send-btn").addEventListener("click", function() {
+  var input = document.getElementById("interview-input");
+  var text = input.value.trim();
+  if (!text) return;
+  _interviewMessages.push({ role: "user", content: text });
+  _appendInterviewMessage("user", text);
+  input.value = "";
+  _sendInterviewStep();
+});
+
+document.getElementById("interview-input").addEventListener("keydown", function(e) {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    document.getElementById("interview-send-btn").click();
+  }
+});
+
+document.getElementById("interview-cancel").addEventListener("click", function() {
+  hide("persona-interview-modal");
+  document.getElementById("interview-model").disabled = false;
+  _interviewRunning = false;
+  resetPersonaSelectValue(_interviewTarget);
+});
+
+document.querySelector("#persona-interview-modal .modal-overlay").addEventListener("click", function() {
+  hide("persona-interview-modal");
+  document.getElementById("interview-model").disabled = false;
+  _interviewRunning = false;
+});
+
+/* ── Chat-to-Persona ── */
+var _chatPersonaText = null;
+
+
+function openChatPersonaModal() {
+  _chatPersonaText = null;
+  document.getElementById("chat-file-info").classList.add("hidden");
+  document.getElementById("chat-file-info").textContent = "";
+  document.getElementById("chat-persona-status").classList.add("hidden");
+  document.getElementById("chat-persona-results").classList.add("hidden");
+  document.getElementById("chat-persona-list").innerHTML = "";
+  document.getElementById("chat-persona-analyze-btn").disabled = true;
+  document.getElementById("chat-file-drop").textContent = "Drop a .txt chat file here or click to browse";
+  _populateChatModelSelect();
+  show("chat-persona-modal");
+}
+
+function _populateChatModelSelect() {
+  var sel = document.getElementById("chat-persona-model");
+  var html = "";
+  GLADIATORS.forEach(function(g) {
+    (g.variants || []).forEach(function(v) {
+      var spec = _gladiatorToProviderPrefix(g.id) + ":" + v.model;
+      html += '<option value="' + esc(spec) + '">' + esc(g.name + " — " + v.label) + '</option>';
+    });
+  });
+  sel.innerHTML = html;
+}
+
+// File drop + click
+var chatDropEl = document.getElementById("chat-file-drop");
+var chatFileInput = document.getElementById("chat-file-input");
+
+chatDropEl.addEventListener("click", function() { chatFileInput.click(); });
+chatDropEl.addEventListener("dragover", function(e) { e.preventDefault(); chatDropEl.classList.add("drag-over"); });
+chatDropEl.addEventListener("dragleave", function() { chatDropEl.classList.remove("drag-over"); });
+chatDropEl.addEventListener("drop", function(e) {
+  e.preventDefault();
+  chatDropEl.classList.remove("drag-over");
+  if (e.dataTransfer.files.length) _readChatFile(e.dataTransfer.files[0]);
+});
+chatFileInput.addEventListener("change", function() {
+  if (chatFileInput.files.length) _readChatFile(chatFileInput.files[0]);
+});
+
+function _readChatFile(file) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    _chatPersonaText = e.target.result;
+    var lines = _chatPersonaText.split("\n").filter(function(l) { return l.trim(); }).length;
+    document.getElementById("chat-file-drop").textContent = file.name;
+    var info = document.getElementById("chat-file-info");
+    info.textContent = lines + " lines loaded";
+    info.classList.remove("hidden");
+    document.getElementById("chat-persona-analyze-btn").disabled = false;
+  };
+  reader.readAsText(file);
+}
+
+document.getElementById("chat-persona-analyze-btn").addEventListener("click", function() {
+  if (!_chatPersonaText) return;
+  var btn = document.getElementById("chat-persona-analyze-btn");
+  btn.disabled = true;
+  btn.textContent = "Analyzing...";
+  document.getElementById("chat-persona-status").classList.remove("hidden");
+  document.getElementById("chat-persona-results").classList.add("hidden");
+
+  var model = document.getElementById("chat-persona-model").value;
+  fetch("/personas/from-chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: model, chat_text: _chatPersonaText })
+  })
+  .then(function(r) {
+    if (!r.ok) return r.json().then(function(d) { throw new Error(d.detail || "Analysis failed"); });
+    return r.json();
+  })
+  .then(function(data) {
+    btn.textContent = "Analyze Chat";
+    btn.disabled = false;
+    document.getElementById("chat-persona-status").classList.add("hidden");
+    _renderChatPersonaResults(data);
+  })
+  .catch(function(e) {
+    btn.textContent = "Retry";
+    btn.disabled = false;
+    document.getElementById("chat-persona-status").classList.add("hidden");
+    toast("Analysis failed: " + (e.message || ""));
+  });
+});
+
+function _renderChatPersonaResults(data) {
+  var container = document.getElementById("chat-persona-list");
+  var resultsEl = document.getElementById("chat-persona-results");
+  resultsEl.classList.remove("hidden");
+
+  if (!data.personas || !data.personas.length) {
+    container.innerHTML = '<div class="pp-empty">No personas generated.</div>';
+    return;
+  }
+
+  var html = "";
+  data.personas.forEach(function(p) {
+    html += '<div class="pp-item pp-item-custom chat-persona-card" data-pid="' + esc(p.persona_id) + '">';
+    html += '<div class="pp-item-name">' + esc(p.name) + '</div>';
+    html += '<div class="pp-item-desc">' + esc(p.description.slice(0, 80)) + '</div>';
+    html += '<div class="chat-persona-actions">';
+    html += '<button class="btn-gold btn-sm chat-save-btn" data-pid="' + esc(p.persona_id) + '">Save</button>';
+    html += '<button class="text-btn chat-preview-btn" data-pid="' + esc(p.persona_id) + '">Preview</button>';
+    html += '</div>';
+    html += '</div>';
+  });
+
+  if (data.skipped_speakers && data.skipped_speakers.length) {
+    html += '<div class="pp-item-desc" style="margin-top:8px">Skipped (too few messages): ' + esc(data.skipped_speakers.join(", ")) + '</div>';
+  }
+
+  container.innerHTML = html;
+
+  // Store persona data for save/preview
+  var personaMap = {};
+  data.personas.forEach(function(p) { personaMap[p.persona_id] = p; });
+
+  container.querySelectorAll(".chat-save-btn").forEach(function(btn) {
+    btn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      var p = personaMap[btn.dataset.pid];
+      if (!p) return;
+      api("/personas", {
+        method: "POST",
+        body: JSON.stringify({ persona_id: p.persona_id, content: p.content })
+      }).then(function() {
+        btn.textContent = "Saved";
+        btn.disabled = true;
+        toast("Saved: " + p.name);
+        fetchPersonas();
+      }).catch(function(err) { toast("Save failed: " + (err.message || "")); });
+    });
+  });
+
+  container.querySelectorAll(".chat-preview-btn").forEach(function(btn) {
+    btn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      var p = personaMap[btn.dataset.pid];
+      if (!p) return;
+      hide("chat-persona-modal");
+      openPersonaModalWithDraft(p.name, p.content, null);
+    });
+  });
+}
+
+document.getElementById("chat-persona-cancel").addEventListener("click", function() {
+  hide("chat-persona-modal");
+});
+document.querySelector("#chat-persona-modal .modal-overlay").addEventListener("click", function() {
+  hide("chat-persona-modal");
+});
 
 function previewPersona(personaId) {
   personaModalMode = "preview";
@@ -1668,38 +2043,6 @@ document.getElementById("persona-cancel").addEventListener("click", function() {
   }
 });
 
-document.getElementById("builder-generate-btn").addEventListener("click", function() {
-  var profession = document.getElementById("builder-profession").value.trim();
-  var personality = document.getElementById("builder-personality").value.trim();
-  var style = document.getElementById("builder-style").value.trim();
-  if (!profession) return toast("Enter your job or role first.");
-  if (!personality) return toast("Describe your personality in a few words.");
-  if (!style) return toast("Describe your debate style.");
-
-  api("/personas/generate", {
-    method: "POST",
-    body: JSON.stringify({
-      persona_name: document.getElementById("builder-persona-name").value.trim() || null,
-      profession: profession,
-      personality: personality,
-      debate_style: style,
-      free_text: document.getElementById("builder-notes").value.trim() || null
-    })
-  }).then(function(data) {
-    hide("persona-builder-modal");
-    openPersonaModalWithDraft(data.name || "", data.content || "", personaBuilderTarget);
-    personaBuilderTarget = null;
-    toast("Draft persona generated. Review and tweak it if needed.");
-  }).catch(function(e) {
-    toast("Could not generate persona: " + (e.message || ""));
-  });
-});
-
-document.getElementById("builder-cancel").addEventListener("click", function() {
-  hide("persona-builder-modal");
-  resetPersonaSelectValue(personaBuilderTarget);
-  personaBuilderTarget = null;
-});
 
 /* ── Build payload ── */
 function buildProviderPayloadFromVariant(gladiatorId, variant, tier) {
