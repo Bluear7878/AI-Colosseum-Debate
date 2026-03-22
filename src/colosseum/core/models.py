@@ -690,6 +690,7 @@ class JudgeConfig(BaseModel):
     prefer_merged_plan_on_close_scores: bool = True
     allow_early_finalization: bool = False
     use_evidence_based_judging: bool = True
+    custom_instructions: str = ""  # Free-text instructions for the judge
 
 
 class JudgeDecision(BaseModel):
@@ -896,6 +897,49 @@ class GeneratedPersona(BaseModel):
     content: str
 
 
+class PersonaInterviewMessage(BaseModel):
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class PersonaInterviewRequest(BaseModel):
+    """Request for one step of the persona interview."""
+
+    model: str  # provider:model spec (e.g. "claude:claude-sonnet-4-6")
+    messages: list[PersonaInterviewMessage] = Field(default_factory=list)
+
+
+class PersonaInterviewResult(BaseModel):
+    """Response for one step of the persona interview."""
+
+    message: str  # AI's response text
+    done: bool = False  # True when interview is complete
+    persona: GeneratedPersona | None = None  # Present when done=True
+
+
+class ChatPersonaRequest(BaseModel):
+    """Request to generate personas from a chat log."""
+
+    model: str  # provider:model spec
+    chat_text: str
+
+    @field_validator("chat_text", mode="before")
+    @classmethod
+    def _require_non_empty_chat(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("Chat text must be non-empty.")
+        return normalized
+
+
+class ChatPersonaResult(BaseModel):
+    """Result of chat-to-persona generation."""
+
+    speakers_found: int
+    personas: list[GeneratedPersona] = Field(default_factory=list)
+    skipped_speakers: list[str] = Field(default_factory=list)
+
+
 class RuntimeEvent(BaseModel):
     event_id: str = Field(default_factory=lambda: str(uuid4()))
     created_at: datetime = Field(default_factory=utc_now)
@@ -1004,6 +1048,7 @@ class ExperimentRun(BaseModel):
     project_name: str
     encourage_internet_search: bool = False
     response_language: str = "auto"
+    report_instructions: str = ""
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
     status: RunStatus = RunStatus.PENDING
@@ -1089,6 +1134,7 @@ class RunCreateRequest(BaseModel):
     project_name: str = "Colosseum"
     encourage_internet_search: bool = False
     response_language: str = "auto"
+    report_instructions: str = ""  # Custom instructions for final report generation
     task: TaskSpec
     context_sources: list[ContextSourceInput] = Field(default_factory=list)
     agents: list[AgentConfig]

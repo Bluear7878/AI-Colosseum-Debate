@@ -84,6 +84,111 @@ class PersonaGenerator:
         },
     }
 
+    SPEECH_PATTERN_HINTS = {
+        "analytical": {
+            "sentence_starters": ["The data suggests", "If we decompose this", "Notice that"],
+            "transitions": ["which implies", "consequently", "the key variable here is"],
+            "emphasis": "italicizes numbers and uses parenthetical qualifiers (roughly, approximately)",
+            "punctuation": "semicolons for compound claims; avoids exclamation marks",
+        },
+        "skeptical": {
+            "sentence_starters": ["But does that actually hold?", "What's the evidence for", "I'm not convinced that"],
+            "transitions": ["and yet", "however", "the gap here is"],
+            "emphasis": "rhetorical questions as emphasis; understatement over hyperbole",
+            "punctuation": "question marks heavily; ellipsis for trailing doubt...",
+        },
+        "empathetic": {
+            "sentence_starters": ["I hear what you're saying", "That's a fair concern", "From their perspective"],
+            "transitions": ["and at the same time", "which is why", "building on that"],
+            "emphasis": "acknowledges the other side before pivoting; uses inclusive 'we'",
+            "punctuation": "em-dashes for asides — like this — to add nuance",
+        },
+        "bold": {
+            "sentence_starters": ["Here's the move:", "Let's stop pretending", "The answer is obvious"],
+            "transitions": ["and that's exactly why", "which is why we ship now", "full stop"],
+            "emphasis": "repetition for emphasis; uses em-dashes liberally",
+            "punctuation": "short sentences. Fragments. For rhythm.",
+        },
+        "calm": {
+            "sentence_starters": ["Let's step back for a moment", "Consider this", "There's a quieter point here"],
+            "transitions": ["which brings us to", "and so", "the underlying pattern is"],
+            "emphasis": "understatement; lets evidence carry the weight instead of rhetoric",
+            "punctuation": "measured commas, rarely exclaims, periods land softly",
+        },
+        "playful": {
+            "sentence_starters": ["Okay but hear me out", "Plot twist:", "Here's the fun part"],
+            "transitions": ["which, honestly,", "and — surprise —", "but here's the kicker"],
+            "emphasis": "wit and unexpected analogies; parenthetical jokes",
+            "punctuation": "em-dashes and ellipses for comic timing... lots of them",
+        },
+    }
+
+    VOCABULARY_HINTS = {
+        "analytical": {
+            "use": ["decompose", "variable", "signal-to-noise", "calibrate", "assumption", "constraint"],
+            "avoid": ["game-changer", "synergy", "pivot", "disrupt", "obviously"],
+        },
+        "skeptical": {
+            "use": ["allegedly", "claimed", "evidence", "unproven", "failure mode", "really?"],
+            "avoid": ["clearly", "everyone knows", "no-brainer", "obviously", "trust me"],
+        },
+        "empathetic": {
+            "use": ["stakeholder", "impact", "trust", "sustainable", "perspective", "downstream"],
+            "avoid": ["crush it", "dominate", "destroy the competition", "ruthless"],
+        },
+        "bold": {
+            "use": ["ship", "bet", "upside", "momentum", "bottleneck", "timeline"],
+            "avoid": ["perhaps", "it depends", "on the other hand", "arguably", "let's revisit"],
+        },
+        "calm": {
+            "use": ["pattern", "underlying", "gradual", "steady", "balance", "nuance"],
+            "avoid": ["urgent", "crisis", "immediately", "game-over", "catastrophe"],
+        },
+        "playful": {
+            "use": ["honestly", "wild", "plot twist", "kicker", "spicy", "vibe"],
+            "avoid": ["per se", "furthermore", "heretofore", "notwithstanding", "pursuant to"],
+        },
+    }
+
+    SAMPLE_SENTENCE_HINTS = {
+        "analytical": {
+            "agree": "That checks out — the mechanism you described maps directly to the constraint we identified.",
+            "disagree": "The claim doesn't survive decomposition: the third assumption breaks the chain.",
+            "cite_evidence": "The strongest signal here is the throughput data, which bounds the answer.",
+            "concede": "I'll update on that — my prior assumption was under-specified.",
+        },
+        "skeptical": {
+            "agree": "Okay, that one actually holds up. The evidence is tight enough.",
+            "disagree": "That sounds compelling until you ask what happens when it fails.",
+            "cite_evidence": "The only data point that matters here is the failure rate — everything else is noise.",
+            "concede": "Fine, I was wrong on that specific claim. The rest still stands.",
+        },
+        "empathetic": {
+            "agree": "I really appreciate that framing — it captures the human side we were missing.",
+            "disagree": "I see where you're coming from, but the downstream impact tells a different story.",
+            "cite_evidence": "If we look at how this affects the people closest to the problem...",
+            "concede": "You're right, and I should have weighted that perspective more heavily.",
+        },
+        "bold": {
+            "agree": "Exactly — and if we push that logic further, we should just do it now.",
+            "disagree": "That's playing not to lose. The actual move is way bigger.",
+            "cite_evidence": "Look at the numbers — they're screaming at us to act.",
+            "concede": "Fine, you're right on that point. But it doesn't change the endgame.",
+        },
+        "calm": {
+            "agree": "That's a well-grounded point. It aligns with the broader pattern here.",
+            "disagree": "I'd gently push back — there's a quieter signal that contradicts that reading.",
+            "cite_evidence": "The most telling indicator is actually the least dramatic one.",
+            "concede": "That's fair. I was overweighting one factor at the expense of the whole picture.",
+        },
+        "playful": {
+            "agree": "Oh that's good — I'm stealing that framing, it's too clean.",
+            "disagree": "Love the energy, but that argument has a plot hole you could drive a truck through.",
+            "cite_evidence": "Okay so here's the fun part — the data actually says the opposite.",
+            "concede": "Alright, you got me on that one. Well played.",
+        },
+    }
+
     def generate(self, profile: PersonaProfileRequest) -> GeneratedPersona:
         name = self._resolve_name(profile)
         persona_id = self._slugify(name)
@@ -94,6 +199,9 @@ class PersonaGenerator:
 
         personality_hint = self._select_personality_hint(personality)
         style_hint = self._select_style_hint(debate_style)
+        speech_hints = self._select_speech_pattern_hint(personality)
+        vocab_hints = self._select_vocabulary_hint(personality)
+        samples = self._select_sample_sentence_hint(personality)
         description = f"{profession} lens with a {personality.lower()} temperament and a {debate_style.lower()} debate style."
 
         content = "\n".join(
@@ -132,6 +240,22 @@ class PersonaGenerator:
                 f"- Risk: {personality_hint['risk']}.",
                 "- If the user's stated context conflicts with your instinct, follow the user's context.",
                 "- Do not invent background facts about the user that were not provided.",
+                "",
+                "## Speech Patterns",
+                f"- Sentence starters: {', '.join(speech_hints['sentence_starters'])}",
+                f"- Transitions: {', '.join(speech_hints['transitions'])}",
+                f"- Emphasis style: {speech_hints['emphasis']}",
+                f"- Punctuation: {speech_hints['punctuation']}",
+                "",
+                "## Vocabulary",
+                f"- USE these words/phrases: {', '.join(vocab_hints['use'])}",
+                f"- NEVER USE these words/phrases: {', '.join(vocab_hints['avoid'])}",
+                "",
+                "## Sample Sentences",
+                f'- Agreeing: "{samples["agree"]}"',
+                f'- Disagreeing: "{samples["disagree"]}"',
+                f'- Citing evidence: "{samples["cite_evidence"]}"',
+                f'- Making a concession: "{samples["concede"]}"',
                 "",
                 "## User Notes",
                 owner_notes
@@ -179,6 +303,40 @@ class PersonaGenerator:
             "debate": "keeps the discussion bounded and returns to the actual decision criteria",
             "cadence": "controlled and readable, with no filler for filler's sake",
             "signature": "returns to the actual decision criteria whenever the debate starts drifting",
+        }
+
+    def _select_speech_pattern_hint(self, personality: str) -> dict[str, object]:
+        lowered = personality.lower()
+        for key, hint in self.SPEECH_PATTERN_HINTS.items():
+            if key in lowered:
+                return hint
+        return {
+            "sentence_starters": ["Here's how I see it", "Let me put it this way", "The core issue is"],
+            "transitions": ["which means", "and that leads to", "the thing is"],
+            "emphasis": "plain emphasis; lets the argument do the work",
+            "punctuation": "standard punctuation with no strong stylistic lean",
+        }
+
+    def _select_vocabulary_hint(self, personality: str) -> dict[str, list[str]]:
+        lowered = personality.lower()
+        for key, hint in self.VOCABULARY_HINTS.items():
+            if key in lowered:
+                return hint
+        return {
+            "use": ["trade-off", "signal", "context", "constraint", "priority", "evidence"],
+            "avoid": ["synergy", "circle back", "low-hanging fruit", "move the needle"],
+        }
+
+    def _select_sample_sentence_hint(self, personality: str) -> dict[str, str]:
+        lowered = personality.lower()
+        for key, hint in self.SAMPLE_SENTENCE_HINTS.items():
+            if key in lowered:
+                return hint
+        return {
+            "agree": "That's a solid point — it lines up with the evidence we have.",
+            "disagree": "I don't think that holds up when you look at the full picture.",
+            "cite_evidence": "The strongest piece of evidence here points in a different direction.",
+            "concede": "Fair enough — I'll update my position on that.",
         }
 
     def _clean_sentence(self, text: str) -> str:

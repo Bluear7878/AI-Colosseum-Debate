@@ -648,6 +648,28 @@ h1 {
   margin-bottom: 4px;
 }
 
+/* ── Judge Instructions ── */
+.judge-instructions-wrap { margin-top: 10px; }
+.judge-instructions-wrap textarea { width: 100%; font-size: 0.82rem; }
+.judge-criteria-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.criteria-chip {
+  padding: 4px 10px;
+  border: 1px solid rgba(212, 164, 76, 0.2);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--sand-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.criteria-chip:hover { border-color: var(--gold); color: var(--sand); }
+.criteria-chip-active { border-color: var(--gold); background: rgba(212, 164, 76, 0.12); color: var(--gold-light); }
+
+/* ── Report Config ── */
+.report-config-section { margin: 14px 0; }
+.report-config-section textarea { width: 100%; font-size: 0.82rem; }
+
 .judge-policy-toggle {
   margin-top: 12px;
 }
@@ -1360,24 +1382,85 @@ h1 {
 }
 
 /* ── Persona select ── */
-.persona-select {
+/* ── Persona Chip Button (on gladiator cards) ── */
+.persona-chip-btn {
   width: 100%;
-  padding: 3px 6px;
-  border: 1px solid rgba(160, 120, 200, 0.2);
+  margin-top: 4px;
+  padding: 4px 8px;
+  border: 1px dashed rgba(160, 120, 200, 0.25);
   border-radius: 8px;
-  background: rgba(15, 15, 26, 0.7);
+  background: transparent;
   color: var(--sand-muted);
   font: inherit;
   font-size: 0.72rem;
   cursor: pointer;
-  appearance: auto;
-  margin-top: 4px;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.persona-chip-btn:hover { border-color: rgba(160, 120, 200, 0.5); color: var(--sand); }
+.persona-chip-btn.persona-active {
+  border-style: solid;
+  border-color: rgba(160, 120, 200, 0.4);
+  background: rgba(160, 120, 200, 0.08);
+  color: #c9a0e8;
 }
 
-.persona-select:focus {
-  outline: none;
-  border-color: rgba(160, 120, 200, 0.6);
+/* ── Persona Picker Modal ── */
+.persona-picker-content { max-width: 640px; max-height: 80vh; display: flex; flex-direction: column; }
+.persona-picker-header { margin-bottom: 10px; }
+.persona-picker-actions-top {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
 }
+.persona-picker-list {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 120px;
+  max-height: 400px;
+}
+.persona-picker-footer { border-top: 1px solid rgba(212, 164, 76, 0.08); padding-top: 10px; }
+.pp-group-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--sand-muted);
+  margin: 10px 0 6px;
+}
+.pp-group-label:first-child { margin-top: 0; }
+.pp-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 8px;
+}
+.pp-item {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(212, 164, 76, 0.08);
+  background: rgba(26, 26, 46, 0.7);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.pp-item:hover { border-color: rgba(160, 120, 200, 0.4); background: rgba(26, 26, 46, 0.95); }
+.pp-item-active { border-color: rgba(160, 120, 200, 0.5); background: rgba(160, 120, 200, 0.1); }
+.pp-item-custom { border-color: rgba(142, 205, 183, 0.15); }
+.pp-item-custom:hover { border-color: rgba(142, 205, 183, 0.4); }
+.pp-item-name { font-weight: 700; font-size: 0.85rem; color: var(--sand); margin-bottom: 2px; }
+.pp-item-desc { font-size: 0.72rem; color: var(--sand-muted); line-height: 1.3; }
+.pp-empty { color: var(--sand-muted); font-size: 0.85rem; padding: 16px 0; text-align: center; }
+
+/* Persona preview inside picker */
+.persona-picker-preview { flex: 1; overflow-y: auto; max-height: 400px; }
+.persona-preview-header { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.persona-preview-title { margin: 0; font-size: 1rem; color: var(--gold); font-family: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif; }
+.persona-preview-body { font-size: 0.84rem; line-height: 1.55; color: var(--sand); }
+.pp-h { color: var(--gold); font-size: 0.92rem; margin: 12px 0 4px; font-family: "Palatino Linotype", "Book Antiqua", Palatino, Georgia, serif; }
+.pp-bq { margin: 4px 0; padding: 4px 12px; border-left: 3px solid rgba(160, 120, 200, 0.3); color: var(--sand-muted); font-style: italic; }
+.pp-li { padding: 1px 0 1px 12px; position: relative; }
+.pp-li::before { content: "\2022"; position: absolute; left: 0; color: var(--gold); }
+.pp-p { margin: 4px 0; }
+.pp-loading, .pp-error { color: var(--sand-muted); padding: 12px 0; }
 
 /* ── Modal ── */
 .modal {
@@ -1435,6 +1518,63 @@ h1 {
 .persona-name-row input {
   width: 100%;
 }
+
+/* ── Persona Interview Modal ── */
+.persona-interview-content { max-width: 580px; display: flex; flex-direction: column; }
+.interview-model-row { margin-bottom: 12px; }
+.interview-model-row select { width: 100%; }
+.interview-chat {
+  flex: 1;
+  max-height: 340px;
+  overflow-y: auto;
+  margin-bottom: 10px;
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(15, 15, 26, 0.5);
+  border: 1px solid rgba(212, 164, 76, 0.08);
+  min-height: 120px;
+}
+.interview-messages { display: flex; flex-direction: column; gap: 8px; }
+.interview-msg {
+  padding: 8px 12px;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  line-height: 1.45;
+  max-width: 85%;
+  word-wrap: break-word;
+}
+.interview-msg-assistant {
+  align-self: flex-start;
+  background: rgba(160, 120, 200, 0.12);
+  color: var(--sand);
+  border: 1px solid rgba(160, 120, 200, 0.15);
+}
+.interview-msg-user {
+  align-self: flex-end;
+  background: rgba(212, 164, 76, 0.12);
+  color: var(--sand);
+  border: 1px solid rgba(212, 164, 76, 0.15);
+}
+.interview-hint {
+  color: var(--sand-muted);
+  font-size: 0.84rem;
+  text-align: center;
+  padding: 20px 0;
+}
+.interview-input-row {
+  display: flex;
+  gap: 8px;
+}
+.interview-input-row input { flex: 1; }
+
+/* ── Chat-to-Persona ── */
+.chat-upload-area { margin-bottom: 12px; }
+.chat-file-drop { cursor: pointer; text-align: center; padding: 20px; }
+.chat-file-drop.drag-over { border-color: var(--gold); background: rgba(212, 164, 76, 0.08); }
+.chat-file-info { font-size: 0.8rem; color: #8ecdb7; margin-top: 6px; }
+.chat-persona-status { padding: 10px 0; }
+.chat-persona-actions { display: flex; gap: 6px; margin-top: 6px; }
+.chat-persona-card { position: relative; }
 
 .builder-input {
   width: 100%;
