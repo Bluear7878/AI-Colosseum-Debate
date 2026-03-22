@@ -10,7 +10,9 @@ PERSONA_VOICE_CONTRACT = (
     "VOICE CONTRACT: Write in a way that sounds recognizably like this persona. "
     "Let your diction, cadence, level of directness, emotional temperature, and rhetorical habits "
     "show up naturally in every free-text field. Do not describe the persona from the outside; "
-    "speak through that lens."
+    "speak through that lens. "
+    "When sample sentences are provided, reproduce their sentence structure and rhythm — "
+    "not the exact words, but the same shape, length, and construction patterns."
 )
 
 PERSONA_STYLE_GUARDRAIL = (
@@ -23,7 +25,9 @@ PERSONA_STYLE_GUARDRAIL = (
 PERSONA_FLATNESS_GUARDRAIL = (
     "VOICE FAILURE MODE: Do not flatten into generic assistant prose, neutral corporate filler, "
     "or interchangeable debate boilerplate. The persona should be visible in sentence shape, "
-    "transitions, emphasis, concessions, and how arguments are framed."
+    "transitions, emphasis, concessions, and how arguments are framed. "
+    "If the persona specifies words to AVOID, treat those as hard constraints — "
+    "using them is a voice failure."
 )
 
 _ORDERED_BULLET_RE = re.compile(r"^\d+\.\s+")
@@ -43,6 +47,14 @@ _SECTION_ALIASES = {
     "watchouts": "watchouts",
     "blind spots to watch": "watchouts",
     "user notes": "user_notes",
+    "speech patterns": "speech_patterns",
+    "speech pattern": "speech_patterns",
+    "vocabulary": "vocabulary",
+    "vocab": "vocabulary",
+    "word bank": "vocabulary",
+    "sample sentences": "sample_sentences",
+    "example sentences": "sample_sentences",
+    "sample dialogue": "sample_sentences",
 }
 
 
@@ -59,6 +71,9 @@ class PersonaVoiceProfile:
     core_principles: tuple[str, ...] = ()
     watchouts: tuple[str, ...] = ()
     user_notes: tuple[str, ...] = ()
+    speech_patterns: tuple[str, ...] = ()
+    vocabulary: tuple[str, ...] = ()
+    sample_sentences: tuple[str, ...] = ()
 
     @property
     def is_empty(self) -> bool:
@@ -73,6 +88,9 @@ class PersonaVoiceProfile:
                 self.core_principles,
                 self.watchouts,
                 self.user_notes,
+                self.speech_patterns,
+                self.vocabulary,
+                self.sample_sentences,
             )
         )
 
@@ -157,6 +175,13 @@ def parse_persona_voice_profile(persona_content: str | None) -> PersonaVoiceProf
     principle_text, principle_items = _parse_section_content(sections.get("core_principles", []))
     watchout_text, watchout_items = _parse_section_content(sections.get("watchouts", []))
     user_note_text, user_note_items = _parse_section_content(sections.get("user_notes", []))
+    speech_pattern_text, speech_pattern_items = _parse_section_content(
+        sections.get("speech_patterns", [])
+    )
+    vocabulary_text, vocabulary_items = _parse_section_content(sections.get("vocabulary", []))
+    sample_sentence_text, sample_sentence_items = _parse_section_content(
+        sections.get("sample_sentences", [])
+    )
 
     fallback_freeform = " ".join(item for item in freeform_lines if item).strip() or None
 
@@ -167,6 +192,11 @@ def parse_persona_voice_profile(persona_content: str | None) -> PersonaVoiceProf
     core_principles = principle_items or ((principle_text,) if principle_text else ())
     watchouts = watchout_items or ((watchout_text,) if watchout_text else ())
     user_notes = user_note_items or ((user_note_text,) if user_note_text else ())
+    speech_patterns = speech_pattern_items or ((speech_pattern_text,) if speech_pattern_text else ())
+    vocabulary = vocabulary_items or ((vocabulary_text,) if vocabulary_text else ())
+    sample_sentences = sample_sentence_items or (
+        (sample_sentence_text,) if sample_sentence_text else ()
+    )
 
     return PersonaVoiceProfile(
         name=name,
@@ -178,6 +208,9 @@ def parse_persona_voice_profile(persona_content: str | None) -> PersonaVoiceProf
         core_principles=core_principles,
         watchouts=watchouts,
         user_notes=user_notes,
+        speech_patterns=speech_patterns,
+        vocabulary=vocabulary,
+        sample_sentences=sample_sentences,
     )
 
 
@@ -204,6 +237,32 @@ def build_persona_voice_profile_block(persona_content: str | None) -> str | None
     if visible_habits:
         lines.append("- Keep these habits visibly present in the writing:")
         lines.extend(f"  - {item}" for item in visible_habits)
+
+    if profile.speech_patterns:
+        lines.append("- Reproduce these speech patterns:")
+        lines.extend(f"  - {item}" for item in profile.speech_patterns)
+
+    if profile.vocabulary:
+        use_words = [v for v in profile.vocabulary if v.upper().startswith("USE:")]
+        never_words = [v for v in profile.vocabulary if v.upper().startswith("NEVER")]
+        other_words = [v for v in profile.vocabulary if v not in use_words and v not in never_words]
+        if use_words or never_words:
+            if use_words:
+                lines.append("- USE these words/phrases:")
+                lines.extend(f"  - {item}" for item in use_words)
+            if never_words:
+                lines.append("- NEVER USE these words/phrases:")
+                lines.extend(f"  - {item}" for item in never_words)
+            if other_words:
+                lines.append("- Vocabulary notes:")
+                lines.extend(f"  - {item}" for item in other_words)
+        else:
+            lines.append("- Vocabulary palette:")
+            lines.extend(f"  - {item}" for item in profile.vocabulary)
+
+    if profile.sample_sentences:
+        lines.append("- Match the structure and rhythm of these example sentences:")
+        lines.extend(f"  - \"{item}\"" for item in profile.sample_sentences)
 
     principles = _select_items(profile.core_principles, limit=3)
     if principles:
@@ -271,4 +330,10 @@ def build_persona_expression_requirement(
     principles = _select_items(profile.core_principles, limit=2)
     if principles:
         requirement += " Let these principles remain visible: " + "; ".join(principles) + "."
+
+    if profile.sample_sentences:
+        examples = profile.sample_sentences[:2]
+        requirement += " Mirror the shape of sentences like: " + "; ".join(
+            f'"{s}"' for s in examples
+        ) + "."
     return requirement

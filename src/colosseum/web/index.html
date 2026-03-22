@@ -90,7 +90,8 @@
 
 	    <!-- Register CLI -->
 	    <div class="register-row">
-	      <button id="build-persona-btn" class="text-btn">+ Build my debate persona</button>
+	      <button id="build-persona-btn" class="text-btn">+ AI Persona Interview</button>
+	      <button id="chat-persona-btn" class="text-btn">+ Personas from Chat Log</button>
 	      <button id="add-cli-btn" class="text-btn">+ Bring your own model</button>
 	    </div>
 	    <div id="cli-form" class="cli-form hidden">
@@ -249,6 +250,35 @@
       <p class="muted">No battles fought yet.</p>
     </div>
   </section>
+  <!-- Persona Picker Modal -->
+  <div id="persona-picker-modal" class="modal hidden">
+    <div class="modal-overlay"></div>
+    <div class="modal-content persona-picker-content">
+      <div class="persona-picker-header">
+        <h3 class="modal-title">Choose a Persona</h3>
+        <p class="modal-desc" id="persona-picker-desc">Select a debating personality for this gladiator.</p>
+      </div>
+      <div class="persona-picker-actions-top">
+        <button id="pp-write-btn" class="btn-gold btn-sm">Write Custom</button>
+        <button id="pp-clear-btn" class="text-btn">Remove Persona</button>
+      </div>
+      <div id="persona-picker-list" class="persona-picker-list"></div>
+      <div id="persona-picker-preview" class="persona-picker-preview hidden">
+        <div class="persona-preview-header">
+          <button id="pp-back-btn" class="text-btn">&larr; Back</button>
+          <h4 id="pp-preview-title" class="persona-preview-title"></h4>
+        </div>
+        <div id="pp-preview-body" class="persona-preview-body"></div>
+        <div class="modal-actions">
+          <button id="pp-select-btn" class="btn-gold btn-sm">Select this Persona</button>
+        </div>
+      </div>
+      <div class="modal-actions persona-picker-footer">
+        <button id="pp-cancel-btn" class="text-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Persona Editor Modal -->
 	  <div id="persona-modal" class="modal hidden">
 	    <div class="modal-overlay"></div>
@@ -267,20 +297,53 @@
       </div>
 	    </div>
 	  </div>
-	  <div id="persona-builder-modal" class="modal hidden">
+	  <div id="persona-interview-modal" class="modal hidden">
 	    <div class="modal-overlay"></div>
-	    <div class="modal-content">
-	      <h3 class="modal-title">Build My Debate Persona</h3>
-	      <p class="modal-desc">Quick profile first. Colosseum will draft a reusable debate persona in Markdown and open it in the editor.</p>
-	      <input id="builder-persona-name" class="arena-input-sm builder-input" placeholder="Persona name (optional)"/>
-	      <input id="builder-profession" class="arena-input-sm builder-input" placeholder="Job / role (e.g. PM, founder, researcher)"/>
-	      <input id="builder-personality" class="arena-input-sm builder-input" placeholder="Personality (e.g. analytical, calm, skeptical)"/>
-	      <input id="builder-style" class="arena-input-sm builder-input" placeholder="Debate style (e.g. direct, collaborative, evidence-driven)"/>
-	      <textarea id="builder-notes" class="arena-input" rows="6"
-	        placeholder="Extra text about how you argue, what you care about, what annoys you in debates, non-negotiables, etc."></textarea>
+	    <div class="modal-content persona-interview-content">
+	      <h3 class="modal-title">Build Persona via Interview</h3>
+	      <p class="modal-desc">An AI will ask you questions to craft your unique debate persona.</p>
+	      <div class="interview-model-row">
+	        <label class="label" for="interview-model">Interviewer Model</label>
+	        <select id="interview-model" class="arena-input-sm"></select>
+	      </div>
+	      <div id="interview-chat" class="interview-chat">
+	        <div id="interview-messages" class="interview-messages"></div>
+	      </div>
+	      <div class="interview-input-row">
+	        <input id="interview-input" class="arena-input-sm" placeholder="Type your answer..." disabled/>
+	        <button id="interview-send-btn" class="btn-gold btn-sm" disabled>Send</button>
+	      </div>
 	      <div class="modal-actions">
-	        <button id="builder-generate-btn" class="btn-gold btn-sm">Generate Draft</button>
-	        <button id="builder-cancel" class="text-btn">Cancel</button>
+	        <button id="interview-start-btn" class="btn-gold btn-sm">Start Interview</button>
+	        <button id="interview-cancel" class="text-btn">Cancel</button>
+	      </div>
+	    </div>
+	  </div>
+	  <!-- Chat-to-Persona Modal -->
+	  <div id="chat-persona-modal" class="modal hidden">
+	    <div class="modal-overlay"></div>
+	    <div class="modal-content persona-interview-content">
+	      <h3 class="modal-title">Generate Personas from Chat</h3>
+	      <p class="modal-desc">Upload a .txt chat log to create unique debate personas for each participant.</p>
+	      <div class="interview-model-row">
+	        <label class="label" for="chat-persona-model">Analyzer Model</label>
+	        <select id="chat-persona-model" class="arena-input-sm"></select>
+	      </div>
+	      <div class="chat-upload-area">
+	        <div id="chat-file-drop" class="file-drop chat-file-drop">Drop a .txt chat file here or click to browse</div>
+	        <input id="chat-file-input" type="file" accept=".txt,.log,.chat" hidden/>
+	        <div id="chat-file-info" class="chat-file-info hidden"></div>
+	      </div>
+	      <div id="chat-persona-status" class="chat-persona-status hidden">
+	        <div class="interview-hint" id="chat-progress-text">Analyzing conversation...</div>
+	      </div>
+	      <div id="chat-persona-results" class="hidden">
+	        <div class="pp-group-label">Generated Personas</div>
+	        <div id="chat-persona-list" class="pp-grid"></div>
+	      </div>
+	      <div class="modal-actions">
+	        <button id="chat-persona-analyze-btn" class="btn-gold btn-sm" disabled>Analyze Chat</button>
+	        <button id="chat-persona-cancel" class="text-btn">Close</button>
 	      </div>
 	    </div>
 	  </div>
