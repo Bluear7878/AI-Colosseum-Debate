@@ -287,3 +287,43 @@ Tell the user where to find the final synthesized report:
 - The judge's job is **not** to pick a winner. Tell the user this if asked —
   the metrics shown per gladiator (reproduced count, novel count, severity
   score) are diagnostic, not competitive.
+
+### Execution gotchas (lessons from real runs)
+
+These are non-obvious things that broke previous runs. Internalize them
+before launching the command.
+
+1. **Always run `colosseum qa` with `run_in_background: true`.** A real QA
+   pass takes 30-90 minutes per gladiator. If you run it foreground and
+   add a `| head -N` filter, the Bash tool will hit its 10-minute timeout
+   and silently kill the run with a confusing empty output. Use
+   `run_in_background: true` from the very first invocation, then poll the
+   `.colosseum/qa/<run_id>/qa_run.json` file or use `tail` on
+   `gladiators/<gid>/stream.jsonl` to watch progress.
+
+2. **Don't worry about `.colosseum/` in the dirty-worktree warning.**
+   `colosseum qa` v0.2+ automatically filters `.colosseum/` entries out of
+   the git status check, so you do **not** need to pre-emptively pass
+   `--allow-dirty-target`. Only add that flag if there are *real* uncommitted
+   files in the target project that the user knows about and accepts.
+
+3. **`--monitor` is auto-disabled outside tmux.** If `$TMUX` is empty,
+   `colosseum qa` silently downgrades to `--no-monitor` and prints a
+   one-line note. You don't need to add `--no-monitor` manually for
+   non-tmux environments — but you can if you want to suppress the note.
+   If you *do* want the live watcher panes, the user must already be inside
+   a tmux session before invoking the wizard.
+
+4. **PR branch checkout is OUT OF SCOPE for this wizard.** If the user
+   wants to QA a specific PR or branch of the target project, they should
+   `git checkout` the branch in the target directory **before** invoking
+   `/colosseum_qa`. Do not do checkouts on the user's behalf — you don't
+   know what state their working tree is in. Mention this gotcha in Q1 if
+   the user asks about PR-specific QA.
+
+5. **Watcher pane filtering — start wide, narrow later.** When tailing a
+   gladiator's `stream.jsonl` or `mediated_trace.jsonl` to debug a stuck
+   run, start with `tail -f <path>` (no grep filter). Only narrow the
+   filter once you've confirmed events are actually being emitted. A grep
+   pattern that's too narrow at the start will hide real activity and make
+   you think the gladiator is dead when it isn't.

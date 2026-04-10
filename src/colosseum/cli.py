@@ -3532,7 +3532,17 @@ def cmd_qa(args: argparse.Namespace) -> None:
 
     orch = get_qa_orchestrator()
 
+    # Auto-disable the tmux watcher panes when we're not actually inside a
+    # tmux session. The user doesn't have to remember `--no-monitor` for
+    # plain shells / SSH / non-tmux environments — we silently downgrade.
     monitor_enabled = bool(getattr(args, "monitor", True))
+    if monitor_enabled and not os.environ.get("TMUX"):
+        monitor_enabled = False
+        print(
+            f"  {DIM}Monitor: not inside tmux, watcher panes disabled "
+            f"(use `tmux new` first if you want live panes){RST}"
+        )
+
     try:
         run = asyncio.run(_run_qa_live(orch, request, monitor=monitor_enabled))
     except KeyboardInterrupt:

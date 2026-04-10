@@ -357,3 +357,113 @@ def test_user_skills_present_detects_missing(tmp_path, monkeypatch):
     # Delete one and re-check
     (fake_home / ".claude" / "skills" / "colosseum_qa" / "SKILL.md").unlink()
     assert _cli._user_skills_present() is False
+
+
+def test_dirty_check_ignores_colosseum_artifact_lines():
+    """Porcelain lines that touch only `.colosseum/` are not real dirt."""
+    from colosseum.services.qa_orchestrator import (
+        _is_colosseum_artifact_line,
+        _path_is_colosseum_artifact,
+    )
+
+    # Untracked .colosseum dir
+    assert _is_colosseum_artifact_line("?? .colosseum/")
+    # Untracked nested file
+    assert _is_colosseum_artifact_line("?? .colosseum/qa/run-id/qa_run.json")
+    # Modified file inside .colosseum
+    assert _is_colosseum_artifact_line(" M .colosseum/runs/abc/run.json")
+    # Renames are also recognized when both sides are colosseum artifacts
+    assert _is_colosseum_artifact_line(
+        "R  .colosseum/runs/old.json -> .colosseum/runs/new.json"
+    )
+
+    # Real changes are NOT filtered
+    assert not _is_colosseum_artifact_line(" M src/foo.py")
+    assert not _is_colosseum_artifact_line("?? new_file.py")
+    assert not _is_colosseum_artifact_line("A  README.md")
+    # Mixed rename (one side outside) is treated as real dirt
+    assert not _is_colosseum_artifact_line(
+        "R  .colosseum/runs/x.json -> docs/x.json"
+    )
+
+    # Helper sanity
+    assert _path_is_colosseum_artifact(".colosseum")
+    assert _path_is_colosseum_artifact(".colosseum/qa/run/x.json")
+    assert _path_is_colosseum_artifact("./.colosseum/x")
+    assert not _path_is_colosseum_artifact("colosseum/x")
+    assert not _path_is_colosseum_artifact(".colosseum_extra/x")
+
+
+def test_preflight_skips_colosseum_only_dirty(tmp_path, monkeypatch):
+    """A target whose only dirty files are .colosseum/ artifacts must NOT
+    raise the dirty-worktree warning."""
+    import subprocess as _sp
+
+    from colosseum.services.qa_orchestrator import QAOrchestrator
+    from colosseum.services.qa_finding_clusterer import QAFindingClusterer
+    from colosseum.services.qa_gpu_allocator import QAGpuAllocator
+    from colosseum.services.qa_repository import QARunRepository
+    from colosseum.services.qa_report_parser import QAReportParser
+    from colosseum.services.qa_report_synthesizer import QAReportSynthesizer
+
+    target = _make_target(tmp_path)
+    # Make target a real git repo with `.colosseum/` untracked
+    _sp.run(["git", "-C", str(target), "init", "-q"], check=True)
+    _sp.run(["git", "-C", str(target), "config", "user.email", "t@t"], check=True)
+    _sp.run(["git", "-C", str(target), "config", "user.name", "t"], check=True)
+    _sp.run(["git", "-C", str(target), "add", "."], check=True)
+    _sp.run(["git", "-C", str(target), "commit", "-q", "-m", "init"], check=True)
+    (target / ".colosseum").mkdir()
+    (target / ".colosseum" / "qa_run.json").write_text("{}", encoding="utf-8")
+
+    orch = QAOrchestrator(
+        gpu_allocator=QAGpuAllocator(local_runtime=_StubLocalRuntime()),
+        repository=QARunRepository(root=tmp_path / "qa_runs"),
+        report_parser=QAReportParser(),
+        clusterer_factory=lambda root: QAFindingClusterer(target_root=root),
+        synthesizer=QAReportSynthesizer(provider_runtime=None),
+        provider_runtime=None,  # type: ignore[arg-type]
+        local_runtime=_StubLocalRuntime(),  # type: ignore[arg-type]
+    )
+    request = _make_request(target)
+    # Make sure allow_dirty_target is False so the check actually runs.
+    request = request.model_copy(update={"allow_dirty_target": False})
+
+    warnings = orch._preflight(request)
+    dirty_warns = [w for w in warnings if "dirty" in w.lower()]
+    assert dirty_warns == [], f"unexpected dirty warning: {dirty_warns}"
+
+
+def test_preflight_still_warns_on_real_dirt(tmp_path, monkeypatch):
+    """If there's a real uncommitted source change, the warning still fires."""
+    import subprocess as _sp
+
+    from colosseum.services.qa_orchestrator import QAOrchestrator
+    from colosseum.services.qa_finding_clusterer import QAFindingClusterer
+    from colosseum.services.qa_gpu_allocator import QAGpuAllocator
+    from colosseum.services.qa_repository import QARunRepository
+    from colosseum.services.qa_report_parser import QAReportParser
+    from colosseum.services.qa_report_synthesizer import QAReportSynthesizer
+
+    target = _make_target(tmp_path)
+    _sp.run(["git", "-C", str(target), "init", "-q"], check=True)
+    _sp.run(["git", "-C", str(target), "config", "user.email", "t@t"], check=True)
+    _sp.run(["git", "-C", str(target), "config", "user.name", "t"], check=True)
+    _sp.run(["git", "-C", str(target), "add", "."], check=True)
+    _sp.run(["git", "-C", str(target), "commit", "-q", "-m", "init"], check=True)
+    # Add real dirt (untracked file outside .colosseum)
+    (target / "real_change.py").write_text("# uncommitted", encoding="utf-8")
+
+    orch = QAOrchestrator(
+        gpu_allocator=QAGpuAllocator(local_runtime=_StubLocalRuntime()),
+        repository=QARunRepository(root=tmp_path / "qa_runs"),
+        report_parser=QAReportParser(),
+        clusterer_factory=lambda root: QAFindingClusterer(target_root=root),
+        synthesizer=QAReportSynthesizer(provider_runtime=None),
+        provider_runtime=None,  # type: ignore[arg-type]
+        local_runtime=_StubLocalRuntime(),  # type: ignore[arg-type]
+    )
+    request = _make_request(target).model_copy(update={"allow_dirty_target": False})
+    warnings = orch._preflight(request)
+    dirty_warns = [w for w in warnings if "dirty" in w.lower()]
+    assert dirty_warns, "expected dirty warning when there is real dirt"
