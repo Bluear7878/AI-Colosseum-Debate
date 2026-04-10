@@ -11,6 +11,8 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![License](https://img.shields.io/badge/license-MIT-blue?style=for-the-badge)](LICENSE)
 
+**🌐 Language / 언어 / 语言:** **English** · [한국어](README.ko.md) · [中文](README.zh.md)
+
 ---
 
 🏛️ **Fair** · 🔍 **Traceable** · 💰 **Cost-Controlled** · 📊 **Evidence-First** · 🔌 **Extensible**
