@@ -10,6 +10,7 @@ This file is the entry point for Colosseum's canonical documentation set.
 
 ## Runtime Specifications
 
+- Project spec (full): [`docs/specs/project-spec.md`](./specs/project-spec.md) — End-to-end project specification (architecture, domain model, CLI, features, configuration)
 - Runtime protocol: [`docs/specs/runtime-protocol.md`](./specs/runtime-protocol.md) — Run lifecycle, streaming contract, cost tracking, depth profiles
 - Agent governance: [`docs/specs/agent-governance.md`](./specs/agent-governance.md) — Agent, persona, and provider boundaries
 - Persona authoring: [`docs/specs/persona-authoring.md`](./specs/persona-authoring.md) — Persona file formats and validation
