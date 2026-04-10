@@ -3,6 +3,7 @@ from pathlib import Path
 
 ARTIFACT_ROOT = Path(".colosseum/runs")
 REVIEW_REPORT_ROOT = Path(".colosseum/reviews")
+QA_RUN_ROOT = Path(".colosseum/qa")
 STATE_ROOT = Path(".colosseum/state")
 PROVIDER_QUOTA_PATH = STATE_ROOT / "provider_quotas.json"
 LOCAL_RUNTIME_SETTINGS_PATH = STATE_ROOT / "local_runtime.json"
@@ -156,3 +157,24 @@ REVIEW_PHASE_CONFIG = {
         "depth_override": None,
     },
 }
+
+# ── QA ensemble mode ────────────────────────────────────────────────
+# Defaults for `colosseum qa`. Each gladiator runs in a real claude --print
+# subprocess (or a mediated executor for non-Claude providers), bound to a
+# disjoint slice of the available GPUs.
+
+QA_DEFAULT_MAX_BUDGET_USD_PER_GLADIATOR = 25.0
+QA_DEFAULT_MAX_GLADIATOR_MINUTES = 90
+QA_DEFAULT_STALL_TIMEOUT_MINUTES = 10
+QA_MIN_FREE_GPU_MEMORY_MB = 5120
+QA_LINE_BUCKET_SIZE = 10
+QA_FINDING_SEVERITY_WEIGHTS: dict[str, float] = {
+    "critical": 10.0,
+    "high": 5.0,
+    "medium": 2.0,
+    "low": 1.0,
+    "info": 0.0,
+}
+QA_DEFAULT_JUDGE_BUDGET_USD = 30.0
+QA_MEDIATED_MAX_ACTIONS = 200
+QA_MEDIATED_MAX_BASH_TIMEOUT_SECONDS = 1800

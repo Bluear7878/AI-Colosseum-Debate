@@ -34,9 +34,16 @@ import sys
 import textwrap
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
-from colosseum.core.config import DEPTH_PROFILES
+from colosseum.core.config import (
+    DEPTH_PROFILES,
+    QA_DEFAULT_MAX_BUDGET_USD_PER_GLADIATOR,
+    QA_DEFAULT_MAX_GLADIATOR_MINUTES,
+    QA_DEFAULT_STALL_TIMEOUT_MINUTES,
+)
 from colosseum.core.models import (
+    AgentConfig,
     BudgetPolicy,
     ContextSourceInput,
     ContextSourceKind,
@@ -48,6 +55,8 @@ from colosseum.core.models import (
     LocalRuntimeConfigUpdate,
     ProviderConfig,
     ProviderPricing,
+    ProviderType,
+    QACreateRequest,
     ReviewCreateRequest,
     ReviewPhase,
     ReviewSeverity,
@@ -3132,6 +3141,257 @@ async def _run_review_live(orch, request) -> None:
         sys.exit(1)
 
 
+# ── colosseum qa (QA ensemble) ───────────────────────────────────
+
+
+def _parse_gpu_csv(raw: str | None) -> list[int] | None:
+    if not raw:
+        return None
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    indices: list[int] = []
+    for part in parts:
+        try:
+            indices.append(int(part))
+        except ValueError:
+            raise ValueError(f"Invalid GPU index: {part!r}")
+    return indices
+
+
+def cmd_qa(args: argparse.Namespace) -> None:
+    """Run a Colosseum QA ensemble against a target project."""
+    from colosseum.bootstrap import get_qa_orchestrator
+
+    target_arg = args.target
+    if not target_arg:
+        print(f"  {RED}--target is required{RST}\n")
+        sys.exit(1)
+    target_path = Path(target_arg).expanduser().resolve()
+    if not target_path.exists():
+        print(f"  {RED}Target path does not exist: {target_path}{RST}\n")
+        sys.exit(1)
+
+    qa_args = (args.qa_args or "").strip()
+    gladiator_specs = args.gladiators or []
+    if not gladiator_specs:
+        print(f"  {RED}At least one gladiator (-g provider:model) is required.{RST}\n")
+        sys.exit(1)
+
+    try:
+        forced_gpus = _parse_gpu_csv(args.gpus)
+    except ValueError as exc:
+        print(f"  {RED}{exc}{RST}\n")
+        sys.exit(1)
+
+    # Parse gladiators → AgentConfig list
+    agents: list[AgentConfig] = []
+    seen_ids: set[str] = set()
+    for i, spec in enumerate(gladiator_specs):
+        try:
+            raw = _parse_gladiator(spec)
+        except ValueError as exc:
+            print(f"  {RED}{exc}{RST}\n")
+            sys.exit(1)
+        agent_id = raw["agent_id"]
+        if agent_id in seen_ids:
+            agent_id = f"{agent_id}_{i}"
+            raw["agent_id"] = agent_id
+        seen_ids.add(agent_id)
+        try:
+            agents.append(AgentConfig(**raw))
+        except Exception as exc:
+            print(f"  {RED}Invalid gladiator '{spec}': {exc}{RST}\n")
+            sys.exit(1)
+
+    judge_provider: ProviderConfig | None = None
+    judge_spec = getattr(args, "judge", None)
+    if judge_spec:
+        try:
+            judge_provider = _parse_provider_spec(judge_spec)
+        except ValueError as exc:
+            print(f"  {RED}{exc}{RST}\n")
+            sys.exit(1)
+
+    request = QACreateRequest(
+        project_name="Colosseum QA",
+        target_description=args.topic,
+        target_path=str(target_path),
+        qa_args=qa_args,
+        gladiators=agents,
+        judge=judge_provider,
+        forced_gpus=forced_gpus,
+        gpus_per_gladiator=args.gpus_per_gladiator,
+        sequential=bool(args.sequential),
+        max_budget_usd_per_gladiator=args.max_budget_usd,
+        max_gladiator_minutes=args.max_gladiator_minutes,
+        stall_timeout_minutes=args.stall_timeout_minutes,
+        brief=bool(args.brief),
+        keep_bug_outputs=bool(args.keep_bug_outputs),
+        spec=args.spec,
+        response_language=getattr(args, "lang", None) or "auto",
+        allow_dirty_target=bool(args.allow_dirty_target),
+        use_stash_safety=not bool(args.no_stash_safety),
+    )
+
+    _print_header()
+    print(f"  {BOLD}QA Target:{RST} {args.topic}")
+    print(f"  {BOLD}Project:{RST}   {target_path}")
+    print(f"  {BOLD}QA Args:{RST}   {qa_args or '(none)'}")
+    print(f"  {BOLD}Gladiators:{RST}")
+    has_non_claude = False
+    for a in agents:
+        marker = ""
+        if a.provider.type != ProviderType.CLAUDE_CLI:
+            marker = f" {GOLD}[mediated]{RST}"
+            has_non_claude = True
+        print(f"    {GOLD}{_display_label(a)}{RST}{marker}")
+    if has_non_claude:
+        print(
+            f"  {GOLD}Note:{RST} non-Claude gladiators run via the mediated executor "
+            f"(Layer 1-3 only, no native subagents)."
+        )
+    if judge_provider:
+        print(f"  {BOLD}Judge:{RST}     {judge_provider.model}")
+    else:
+        print(f"  {BOLD}Judge:{RST}     {DIM}heuristic (no model){RST}")
+    if forced_gpus is not None:
+        print(f"  {BOLD}GPUs:{RST}      {','.join(str(i) for i in forced_gpus)} (forced)")
+    else:
+        print(f"  {BOLD}GPUs:{RST}      auto-detect")
+    if args.sequential:
+        print(f"  {BOLD}Mode:{RST}      sequential")
+    elif args.gpus_per_gladiator:
+        print(f"  {BOLD}Mode:{RST}      parallel ({args.gpus_per_gladiator} GPU/gladiator)")
+    else:
+        print(f"  {BOLD}Mode:{RST}      parallel (even split)")
+    print(
+        f"  {BOLD}Limits:{RST}    ${args.max_budget_usd}/gladiator, "
+        f"{args.max_gladiator_minutes}min soft timeout, "
+        f"{args.stall_timeout_minutes}min stall"
+    )
+    if args.brief:
+        print(f"  {BOLD}Brief:{RST}     yes (no GPU execution)")
+    if args.spec:
+        print(f"  {BOLD}Spec:{RST}      {args.spec}")
+    print(f"\n  {DIM}{'─' * 60}{RST}")
+    print(f"  {GOLD}QA ensemble begins...{RST}\n")
+
+    if not args.yes:
+        try:
+            confirm = input("  Proceed? [y/N] ").strip().lower()
+        except EOFError:
+            confirm = ""
+        if confirm != "y":
+            print(f"  {DIM}Aborted.{RST}\n")
+            sys.exit(0)
+
+    orch = get_qa_orchestrator()
+
+    try:
+        run = asyncio.run(_run_qa_live(orch, request))
+    except KeyboardInterrupt:
+        print(f"\n  {RED}Interrupted by user.{RST}\n")
+        sys.exit(130)
+    except Exception as exc:
+        error_msg = str(exc) or type(exc).__name__
+        print(f"\n  {RED}Error: {error_msg}{RST}\n")
+        sys.exit(1)
+
+    _print_qa_summary(run)
+
+
+async def _run_qa_live(orch, request: QACreateRequest):
+    """Stream QA orchestrator events to the terminal and return the final run."""
+    final_run = None
+    async for event_type, payload in orch.run_qa_streaming(request):
+        if event_type == "preflight":
+            warnings = payload.get("warnings") or []
+            if warnings:
+                print(f"  {GOLD}Pre-flight warnings:{RST}")
+                for w in warnings:
+                    print(f"    {GOLD}!{RST} {w}")
+        elif event_type == "preflight_failed":
+            print(f"  {RED}Pre-flight failed: {payload.get('error', '?')}{RST}")
+        elif event_type == "gpu_plan":
+            allocations = payload.get("allocations") or {}
+            mode = payload.get("mode", "parallel")
+            print(f"  {BOLD}GPU plan ({mode}):{RST}")
+            if not allocations:
+                print(f"    {DIM}(no allocations — brief mode or no GPUs){RST}")
+            for gid, gpus in allocations.items():
+                gpus_text = ",".join(str(i) for i in gpus) if gpus else "(none)"
+                print(f"    {CYAN}{gid}{RST} → CUDA_VISIBLE_DEVICES={gpus_text}")
+        elif event_type == "run_initialized":
+            print(f"  {DIM}Run id: {payload.get('run_id', '?')}{RST}")
+        elif event_type == "stash_taken":
+            print(f"  {DIM}Stash safety: {payload.get('ref', '?')[:12]}{RST}")
+        elif event_type == "gladiator_started":
+            print(f"  {GREEN}>> {payload.get('gladiator_id', '?')} started{RST}")
+        elif event_type == "gladiator_finished":
+            status = payload.get("status", "?")
+            cost = payload.get("cost_usd", 0)
+            tokens = payload.get("tokens", 0)
+            color = GREEN if status in ("completed", "report_written") else RED
+            print(
+                f"  {color}<< {payload.get('gladiator_id', '?')} {status}{RST}  "
+                f"{DIM}{tokens} tok  ${cost:.4f}{RST}"
+            )
+        elif event_type == "gladiator_failed":
+            print(f"  {RED}!! {payload.get('gladiator_id', '?')} failed: {payload.get('error', '?')}{RST}")
+        elif event_type == "reports_parsed":
+            totals = payload.get("totals") or {}
+            grand = sum(totals.values())
+            print(f"  {DIM}Parsed {grand} raw findings across {len(totals)} gladiators{RST}")
+        elif event_type == "clusters_built":
+            print(f"  {DIM}Built {payload.get('count', 0)} clusters{RST}")
+        elif event_type == "stash_drift":
+            files = payload.get("files") or []
+            print(f"  {GOLD}Warning: {len(files)} target files modified outside report path{RST}")
+            for f in files[:5]:
+                print(f"    {DIM}{f}{RST}")
+        elif event_type == "run_completed":
+            print(
+                f"\n  {GREEN}{BOLD}QA ensemble completed.{RST}  "
+                f"{DIM}{payload.get('canonical_findings', 0)} canonical findings  "
+                f"${payload.get('total_cost_usd', 0):.4f}{RST}"
+            )
+        elif event_type == "run_failed":
+            print(f"\n  {RED}QA run failed: {payload.get('error', '?')}{RST}")
+        elif event_type == "qa_run_complete":
+            try:
+                from colosseum.bootstrap import get_qa_orchestrator
+                final_run = get_qa_orchestrator().repository.load_run(payload["run_id"])
+            except Exception:
+                pass
+    return final_run
+
+
+def _print_qa_summary(run) -> None:
+    if run is None:
+        return
+    synthesis = run.synthesis
+    print(f"  {DIM}{'─' * 60}{RST}")
+    print(f"  {BOLD}Run ID:{RST} {run.run_id}")
+    print(f"  {BOLD}Status:{RST} {run.status}")
+    print(f"  {BOLD}Total cost:{RST} ${run.total_cost_usd():.4f}")
+    if synthesis:
+        crit = sum(1 for f in synthesis.canonical_findings if f.severity.value == "critical")
+        high = sum(1 for f in synthesis.canonical_findings if f.severity.value == "high")
+        med = sum(1 for f in synthesis.canonical_findings if f.severity.value == "medium")
+        low = sum(1 for f in synthesis.canonical_findings if f.severity.value == "low")
+        print(
+            f"  {BOLD}Findings:{RST} {len(synthesis.canonical_findings)} canonical "
+            f"({RED}{crit} crit{RST}, {RED}{high} high{RST}, "
+            f"{GOLD}{med} med{RST}, {CYAN}{low} low{RST})"
+        )
+        if synthesis.overall_summary:
+            print(f"\n  {BOLD}Summary:{RST}")
+            print(_wrap(synthesis.overall_summary[:600], indent=4))
+        report_path = Path(".colosseum/qa") / run.run_id / "synthesized_report.md"
+        if report_path.exists():
+            print(f"\n  {GREEN}Report saved:{RST} {report_path}")
+    print()
+
+
 # ── Argument parser ──────────────────────────────────────────────
 
 
@@ -3505,6 +3765,128 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output result as JSON",
     )
 
+    # qa (QA ensemble)
+    p_qa = sub.add_parser(
+        "qa",
+        help="Run a QA ensemble against a target project that ships a .claude/skills/qa skill",
+    )
+    p_qa.add_argument(
+        "-t",
+        "--topic",
+        required=True,
+        help="QA target description (one-line summary of what's being tested)",
+    )
+    p_qa.add_argument(
+        "--target",
+        required=True,
+        metavar="PATH",
+        help="Path to the target project (must contain .claude/skills/qa/SKILL.md)",
+    )
+    p_qa.add_argument(
+        "--qa-args",
+        default="",
+        metavar="ARGS",
+        help="Args forwarded to the /qa skill (e.g. \"aq awq llama3-8b\")",
+    )
+    p_qa.add_argument(
+        "-g",
+        "--gladiators",
+        action="extend",
+        nargs="+",
+        default=None,
+        help="Gladiator specs: provider:model. Claude gladiators run real claude --print, others run via mediated executor.",
+    )
+    p_qa.add_argument(
+        "-j",
+        "--judge",
+        default=None,
+        metavar="PROVIDER:MODEL",
+        help="Judge model spec used to synthesize the canonical report (e.g. claude:claude-opus-4-6). Omit for heuristic synthesis.",
+    )
+    p_qa.add_argument(
+        "--gpus",
+        default=None,
+        metavar="CSV",
+        help="Comma-separated GPU indices to force (e.g. 0,1,2,3). Default: auto-detect.",
+    )
+    p_qa.add_argument(
+        "--gpus-per-gladiator",
+        type=int,
+        default=None,
+        metavar="N",
+        help="GPUs per gladiator slice. Default: floor(eligible / gladiators).",
+    )
+    p_qa.add_argument(
+        "--sequential",
+        action="store_true",
+        default=False,
+        help="Run gladiators one at a time instead of in parallel disjoint slices.",
+    )
+    p_qa.add_argument(
+        "--max-budget-usd",
+        type=float,
+        default=QA_DEFAULT_MAX_BUDGET_USD_PER_GLADIATOR,
+        metavar="USD",
+        help=f"Hard per-gladiator spend cap (default: ${QA_DEFAULT_MAX_BUDGET_USD_PER_GLADIATOR}).",
+    )
+    p_qa.add_argument(
+        "--max-gladiator-minutes",
+        type=int,
+        default=QA_DEFAULT_MAX_GLADIATOR_MINUTES,
+        metavar="MIN",
+        help=f"Soft timeout per gladiator in minutes (default: {QA_DEFAULT_MAX_GLADIATOR_MINUTES}).",
+    )
+    p_qa.add_argument(
+        "--stall-timeout-minutes",
+        type=int,
+        default=QA_DEFAULT_STALL_TIMEOUT_MINUTES,
+        metavar="MIN",
+        help=f"Stall detection threshold per gladiator (default: {QA_DEFAULT_STALL_TIMEOUT_MINUTES}).",
+    )
+    p_qa.add_argument(
+        "--brief",
+        action="store_true",
+        default=False,
+        help="Forward --brief to the /qa skill (code analysis only, no GPU execution).",
+    )
+    p_qa.add_argument(
+        "--keep-bug-outputs",
+        action="store_true",
+        default=False,
+        help="Tell gladiators to keep bug evidence directories instead of cleaning them up.",
+    )
+    p_qa.add_argument(
+        "--spec",
+        default=None,
+        metavar="NAME",
+        help="Forward --spec NAME to the /qa skill (e.g. arm, all).",
+    )
+    p_qa.add_argument(
+        "--lang",
+        default=None,
+        metavar="LANGUAGE",
+        help="Response language (e.g. ko, en, ja). Default: auto-detect.",
+    )
+    p_qa.add_argument(
+        "--allow-dirty-target",
+        action="store_true",
+        default=False,
+        help="Skip the dirty-worktree warning on the target repo.",
+    )
+    p_qa.add_argument(
+        "--no-stash-safety",
+        action="store_true",
+        default=False,
+        help="Skip the git stash safety net (not recommended).",
+    )
+    p_qa.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        default=False,
+        help="Skip the confirmation prompt.",
+    )
+
     return parser
 
 
@@ -3531,6 +3913,7 @@ def main() -> None:
         "debate": cmd_debate,
         "monitor": cmd_monitor,
         "review": cmd_review,
+        "qa": cmd_qa,
     }
     fn = commands.get(args.command)
     if fn:

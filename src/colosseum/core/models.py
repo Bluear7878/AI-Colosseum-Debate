@@ -1166,3 +1166,203 @@ class HumanJudgeActionRequest(BaseModel):
         if self.action == "merge_plans" and len(self.winning_plan_ids) < 2:
             raise ValueError("merge_plans requires at least two winning plan ids.")
         return self
+
+
+# ── QA ensemble mode ────────────────────────────────────────────────
+
+
+class QAFindingSeverity(StrEnum):
+    """Severity ranking for QA findings.
+
+    Distinct from ReviewSeverity because QA findings have different semantics:
+    they represent reproduced bugs from real code execution, not code review
+    observations.
+    """
+
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+    INFO = "info"
+
+
+class QAFindingStatus(StrEnum):
+    """Verification status of a QA finding.
+
+    A finding is REPRODUCED only when a sub-agent actually ran the failing
+    scenario and observed the failure. UNVERIFIED means the gladiator could
+    not test it (timed out, ran out of GPU, etc). FALSE_POSITIVE means a
+    verification agent tried to reproduce and could not.
+    """
+
+    REPRODUCED = "reproduced"
+    UNVERIFIED = "unverified"
+    FALSE_POSITIVE = "false_positive"
+
+
+class QAGladiatorStatus(StrEnum):
+    """Lifecycle status of a single QA gladiator run."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    REPORT_WRITTEN = "report_written"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    TIMED_OUT = "timed_out"
+    NO_OUTPUT = "no_output"
+
+
+class QAFinding(BaseModel):
+    """A single QA finding extracted from one gladiator's report.
+
+    Findings are clustered across gladiators by signature (file, line bucket,
+    severity, symptom hash) and then synthesized into canonical findings by
+    the judge.
+    """
+
+    finding_id: str = Field(default_factory=lambda: str(uuid4()))
+    title: str
+    symptom: str = ""
+    reproduction: str = ""
+    error_evidence: str = ""
+    root_cause: str = ""
+    file_path: str | None = None
+    line_hint: int | None = None
+    severity: QAFindingSeverity = QAFindingSeverity.MEDIUM
+    status: QAFindingStatus = QAFindingStatus.REPRODUCED
+    sources: list[str] = Field(default_factory=list)  # gladiator_ids that reported this
+    raw_bug_id: str | None = None  # e.g. "G-017" from gladiator's report
+    first_seen_by: str | None = None
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _normalize_title(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        return normalized or "(untitled finding)"
+
+
+class QAGpuPlan(BaseModel):
+    """The result of allocating detected GPUs across QA gladiators.
+
+    `mode == "parallel"` means each gladiator gets a disjoint slice and they
+    all run concurrently. `mode == "sequential"` means gladiators run one at
+    a time, each with the full eligible set.
+    """
+
+    detected_devices: list[int] = Field(default_factory=list)
+    eligible_devices: list[int] = Field(default_factory=list)
+    ineligible_reasons: dict[str, str] = Field(default_factory=dict)
+    allocations: dict[str, list[int]] = Field(default_factory=dict)
+    unused_devices: list[int] = Field(default_factory=list)
+    mode: Literal["parallel", "sequential"] = "parallel"
+    forced_indices: list[int] | None = None
+
+
+class QACreateRequest(BaseModel):
+    """Request payload for `colosseum qa`."""
+
+    project_name: str = "Colosseum QA"
+    target_description: str
+    target_path: str
+    qa_args: str = ""
+    gladiators: list[AgentConfig]
+    judge: ProviderConfig | None = None
+    forced_gpus: list[int] | None = None
+    gpus_per_gladiator: int | None = None
+    sequential: bool = False
+    max_budget_usd_per_gladiator: float = 25.0
+    max_gladiator_minutes: int = 90
+    stall_timeout_minutes: int = 10
+    brief: bool = False
+    keep_bug_outputs: bool = False
+    spec: str | None = None
+    response_language: str = "auto"
+    allow_dirty_target: bool = False
+    use_stash_safety: bool = True
+
+    @field_validator("target_description", "target_path", mode="before")
+    @classmethod
+    def _require_target_fields(cls, value: object) -> str:
+        normalized = str(value or "").strip()
+        if not normalized:
+            raise ValueError("target_description and target_path must be non-empty.")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_qa_request(self) -> "QACreateRequest":
+        if not self.gladiators:
+            raise ValueError("At least one QA gladiator is required.")
+        if self.max_budget_usd_per_gladiator < 0:
+            raise ValueError("max_budget_usd_per_gladiator must be non-negative.")
+        if self.max_gladiator_minutes <= 0:
+            raise ValueError("max_gladiator_minutes must be positive.")
+        if self.stall_timeout_minutes <= 0:
+            raise ValueError("stall_timeout_minutes must be positive.")
+        return self
+
+
+class QAGladiatorOutcome(BaseModel):
+    """The result of one gladiator's QA cycle."""
+
+    gladiator_id: str
+    display_name: str
+    provider_type: ProviderType
+    model: str
+    assigned_gpus: list[int] = Field(default_factory=list)
+    status: QAGladiatorStatus = QAGladiatorStatus.PENDING
+    report_path: str | None = None
+    raw_report_text: str | None = None
+    parsed_findings: list[QAFinding] = Field(default_factory=list)
+    raw_unstructured_sections: dict[str, str] = Field(default_factory=dict)
+    parse_status: Literal["ok", "degraded", "failed", "skipped"] = "skipped"
+    token_usage: dict[str, int] = Field(default_factory=dict)
+    cost_usd: float = 0.0
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_seconds: float = 0.0
+    error: str | None = None
+    stdout_log_path: str | None = None
+    stderr_log_path: str | None = None
+    stream_jsonl_path: str | None = None
+    session_id: str | None = None
+
+
+class QASynthesisReport(BaseModel):
+    """Final canonical QA report produced by the judge from the gladiator union."""
+
+    run_id: str
+    target_description: str
+    target_path: str
+    qa_args: str = ""
+    canonical_findings: list[QAFinding] = Field(default_factory=list)
+    cluster_count: int = 0
+    gladiator_contributions: dict[str, dict[str, float]] = Field(default_factory=dict)
+    overall_summary: str = ""
+    coverage_notes: str = ""
+    synthesizer_model: str = ""
+    total_cost_usd: float = 0.0
+    judge_raw_response: str | None = None
+
+
+class QARun(BaseModel):
+    """Top-level container for one `colosseum qa` invocation."""
+
+    run_id: str = Field(default_factory=lambda: str(uuid4()))
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    status: Literal["pending", "running", "completed", "failed"] = "pending"
+    request: QACreateRequest
+    gpu_plan: QAGpuPlan = Field(default_factory=QAGpuPlan)
+    gladiators: list[QAGladiatorOutcome] = Field(default_factory=list)
+    synthesis: QASynthesisReport | None = None
+    stash_ref: str | None = None
+    preflight_warnings: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+
+    def touch(self) -> None:
+        self.updated_at = utc_now()
+
+    def total_cost_usd(self) -> float:
+        return sum(g.cost_usd for g in self.gladiators) + (
+            self.synthesis.total_cost_usd if self.synthesis else 0.0
+        )

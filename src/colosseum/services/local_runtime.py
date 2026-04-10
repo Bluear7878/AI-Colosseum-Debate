@@ -91,6 +91,107 @@ class LocalRuntimeService:
         devices = self._detect_nvidia_devices()
         return devices
 
+    def detect_gpu_free_memory_mb(self) -> dict[int, int]:
+        """Return a mapping of GPU index → free memory in MiB.
+
+        Used by QA mode to filter out GPUs that are already saturated by
+        other workloads. Empty dict if nvidia-smi is missing or fails.
+        """
+        if not shutil_which("nvidia-smi"):
+            return {}
+        try:
+            result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,memory.free",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            return {}
+
+        if result.returncode != 0:
+            return {}
+
+        free_by_index: dict[int, int] = {}
+        for line in result.stdout.strip().splitlines():
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 2:
+                continue
+            try:
+                index = int(parts[0])
+                free_mb = int(parts[1])
+            except ValueError:
+                continue
+            free_by_index[index] = free_mb
+        return free_by_index
+
+    def detect_gpu_compute_processes(self) -> set[int]:
+        """Return the set of GPU indices that currently have active compute processes.
+
+        QA mode refuses to allocate a gladiator onto a GPU that already has a
+        compute process running, to prevent collisions with other quantization
+        runs. Empty set if nvidia-smi is missing.
+        """
+        if not shutil_which("nvidia-smi"):
+            return set()
+
+        try:
+            uuid_result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-gpu=index,uuid",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            return set()
+        if uuid_result.returncode != 0:
+            return set()
+
+        uuid_to_index: dict[str, int] = {}
+        for line in uuid_result.stdout.strip().splitlines():
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) < 2:
+                continue
+            try:
+                idx = int(parts[0])
+            except ValueError:
+                continue
+            uuid_to_index[parts[1]] = idx
+
+        try:
+            apps_result = subprocess.run(
+                [
+                    "nvidia-smi",
+                    "--query-compute-apps=gpu_uuid,pid,process_name",
+                    "--format=csv,noheader,nounits",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception:
+            return set()
+        if apps_result.returncode != 0:
+            return set()
+
+        busy: set[int] = set()
+        for line in apps_result.stdout.strip().splitlines():
+            parts = [part.strip() for part in line.split(",")]
+            if not parts:
+                continue
+            uuid = parts[0]
+            if uuid in uuid_to_index:
+                busy.add(uuid_to_index[uuid])
+        return busy
+
     def resolve_selected_gpu_indices(
         self,
         settings: LocalRuntimeSettings | None = None,
