@@ -1,7 +1,7 @@
 [project]
 name = "colosseum"
 version = "0.1.0"
-description = "Multi-model planning, debate, and judging orchestration platform."
+description = "AI Colosseum debate — multi-model planning, debate, code review, and QA ensemble platform."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [

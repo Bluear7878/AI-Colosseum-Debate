@@ -496,7 +496,7 @@ CLI_AUTH_INFO = {
 
 
 def _print_header():
-    print(f"\n{GOLD}{BOLD}  COLOSSEUM{RST} {DIM}— AI Debate Arena{RST}\n")
+    print(f"\n{GOLD}{BOLD}  AI COLOSSEUM DEBATE{RST}\n")
 
 
 def _wrap(text: str, indent: int = 4, width: int = 76) -> str:
@@ -3535,7 +3535,7 @@ def _print_qa_summary(run) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="colosseum",
-        description="Colosseum — AI Debate Arena",
+        description="AI Colosseum debate — multi-model planning, debate, review, and QA ensemble",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent("""\
         examples:
@@ -3923,7 +3923,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--qa-args",
         default="",
         metavar="ARGS",
-        help="Args forwarded to the /qa skill (e.g. \"aq awq llama3-8b\")",
+        help="Args forwarded to the target's /qa skill (e.g. \"pr\", \"full\", or any scope keyword the target's QA skill defines)",
     )
     p_qa.add_argument(
         "-g",

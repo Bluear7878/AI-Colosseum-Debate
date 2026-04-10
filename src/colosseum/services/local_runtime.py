@@ -133,8 +133,8 @@ class LocalRuntimeService:
         """Return the set of GPU indices that currently have active compute processes.
 
         QA mode refuses to allocate a gladiator onto a GPU that already has a
-        compute process running, to prevent collisions with other quantization
-        runs. Empty set if nvidia-smi is missing.
+        compute process running, to prevent collisions with other GPU
+        workloads. Empty set if nvidia-smi is missing.
         """
         if not shutil_which("nvidia-smi"):
             return set()

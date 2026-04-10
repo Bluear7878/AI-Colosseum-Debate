@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚔️ Colosseum
+# ⚔️ AI Colosseum debate
 
 **멀티 에이전트 토론 아레나 — AI 모델들을 맞붙게 하라**
 

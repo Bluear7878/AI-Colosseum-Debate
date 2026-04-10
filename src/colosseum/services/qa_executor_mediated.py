@@ -123,7 +123,8 @@ def build_mediated_system_prompt(
         else ""
     )
     mode_line = "BRIEF MODE: code analysis only, do not run any GPU code." if brief else (
-        "FULL EXECUTION MODE: actually run quantization and lm-eval on the assigned GPUs."
+        "FULL EXECUTION MODE: actually run the target project's test/eval commands "
+        "on the assigned GPUs."
     )
     spec_line = f"Customer spec: {spec}" if spec else "Customer spec: none"
 

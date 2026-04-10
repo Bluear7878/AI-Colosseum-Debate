@@ -43,8 +43,8 @@ def _finding(
 
 
 def test_two_gladiators_same_bug_collapse_into_one_cluster():
-    f1 = _finding("alpha", "AWQ sym=false ValueError", "schema.py", 123)
-    f2 = _finding("beta", "AWQ sym=false ValueError", "schema.py", 123)
+    f1 = _finding("alpha", "Login empty password ValueError", "schema.py", 123)
+    f2 = _finding("beta", "Login empty password ValueError", "schema.py", 123)
     clusterer = QAFindingClusterer()
     clusters = clusterer.cluster([_outcome("alpha", [f1]), _outcome("beta", [f2])])
     assert len(clusters) == 1

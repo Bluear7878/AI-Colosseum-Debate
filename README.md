@@ -1,6 +1,6 @@
 <div align="center">
 
-# ⚔️ Colosseum
+# ⚔️ AI Colosseum debate
 
 **Multi-Agent Debate Arena — Let AI Models Fight It Out**
 

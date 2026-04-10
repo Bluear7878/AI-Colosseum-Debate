@@ -58,7 +58,7 @@ subagents).
 
 Ask:
 > 어떤 프로젝트를 QA할까요? `.claude/skills/qa/SKILL.md`가 있는 프로젝트의 절대 경로를 입력하세요.
-> (예: `/workspace/QA/np-quantizer-v2`)
+> (예: `/path/to/your/target-project`)
 
 Validate:
 ```bash
@@ -75,7 +75,7 @@ Store as `target`.
 
 Ask:
 > 이번 QA 실행을 한 줄로 설명해주세요. (리포트 제목이 됩니다)
-> (예: "AQ AWQ llama3-8b 풀 패스")
+> (예: "결제 모듈 회귀 테스트", "API 인증 풀 패스")
 
 Store as `topic`.
 
@@ -85,11 +85,11 @@ Store as `topic`.
 
 Ask:
 > 타겟의 `/qa` 스킬에 전달할 인자를 입력하세요. 비워두면 스킬이 자동 감지합니다.
-> 예시:
->   - `aq awq llama3-8b` — AQ 파이프라인의 AWQ 알고리즘 + llama3-8b
->   - `gq` — GQ 파이프라인 전체
->   - `pr` — 현재 PR diff 범위만
->   - `full` — AQ + GQ 종합
+> 인자 형식은 타겟 프로젝트의 QA skill 정의에 따라 다릅니다 — `target/.claude/skills/qa/SKILL.md`를
+> 먼저 읽어보고 어떤 scope keyword를 받는지 확인하세요. 일반적인 예시:
+>   - `pr` — 현재 PR diff 범위만 테스트
+>   - `full` — 전체 회귀 테스트
+>   - 빈 문자열 — 스킬이 git diff 등으로 자동 감지
 
 Store as `qa_args` (empty string allowed).
 
@@ -148,8 +148,8 @@ Store as `gpus_per_gladiator` (int 또는 None).
 
 Ask:
 > QA 모드:
->   - `full` — 실제로 GPU에서 quantize + lm-eval 실행 (오래 걸리지만 진짜 버그를 찾음, 기본값)
->   - `brief` — 코드 분석만, GPU 실행 없음 (빠르고 저렴, 런타임 버그는 못 찾음)
+>   - `full` — 타겟 프로젝트의 코드를 실제로 실행 (오래 걸리지만 진짜 런타임 버그를 찾음, 기본값)
+>   - `brief` — 코드 분석만, 실행 없음 (빠르고 저렴, 런타임 버그는 못 찾음)
 
 Store as `brief` (boolean).
 

@@ -17,7 +17,8 @@ Critical design points (also documented in plans/humble-floating-sundae.md):
 * `--max-budget-usd` is the strongest single safeguard against runaway runs.
 * `--no-session-persistence` keeps test runs out of `~/.claude/projects/`.
 * `--allowedTools "Bash Read Write Edit Glob Grep Task"` is required so the
-  coordinator can spawn sub-agents (`Task`) and run quantization (`Bash`).
+  coordinator can spawn sub-agents (`Task`) and run target-project test
+  commands (`Bash`).
 * `CUDA_VISIBLE_DEVICES` is set in the subprocess env. The coordinator is told
   in the prompt to never override it when spawning children.
 """

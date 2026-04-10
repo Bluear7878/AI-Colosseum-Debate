@@ -45,8 +45,8 @@ CANNED_REPORT_TEMPLATE = """\
 ## Confirmed Bugs (Reproduced)
 
 ### G-001: Smoke bug from {gid}
-- **Symptom**: AdvancedQuantizer crashes with sym=False
-- **Reproduction**: AdvancedQuantizeParameters(sym=False)
+- **Symptom**: ExampleService crashes with empty input
+- **Reproduction**: ExampleService(input="")
 - **Error**: ValueError: shape mismatch
 - **File**: src/schema.py:142
 - **Severity**: High

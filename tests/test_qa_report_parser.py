@@ -10,7 +10,7 @@ GOLDEN_REPORT = """\
 # QA Report — 2026-04-10
 
 ## Summary
-- Scope: AQ AWQ llama3-8b
+- Scope: api auth full pass
 - Duration: 47 min
 - Result: 12 tests passed, 2 failed, 2 confirmed bugs found
 
@@ -22,23 +22,23 @@ GOLDEN_REPORT = """\
 ## Test Results
 | Component | Test | Model | Status | Notes |
 |-----------|------|-------|--------|-------|
-| AQ | AWQ W4 quantize | llama3-8b | PASS | |
+| auth | login flow | gpt-test | PASS | |
 
 ## Confirmed Bugs (Reproduced)
 
-### [NEW] G-017: AWQ sym=false ValueError on llama3-8b
-- **Symptom**: AdvancedQuantizer crashes when sym=False is set on llama3-8b
-- **Reproduction**: AdvancedQuantizeParameters(name=AlgorithmName.AWQ, sym=False)
+### [NEW] G-017: Login fails with empty password
+- **Symptom**: AuthService crashes when password is set to empty string
+- **Reproduction**: AuthService.login(user="alice", password="")
 - **Error**: ValueError: shape mismatch at schema.py:123
-- **Root Cause**: dtype validator does not handle asymmetric AWQ
-- **File**: src/np_quantizer_v2/schema.py:123
+- **Root Cause**: input validator does not handle empty string
+- **File**: src/example/schema.py:123
 - **Severity**: High
 
-### G-018: GPTQ group_size=128 silent OOM
-- **Symptom**: GPTQ with group_size=128 OOMs without raising on 24GB GPU
-- **Reproduction**: GPTQParameters(group_size=128, model='llama3-8b')
-- **Error**: CUDA OOM, no traceback (silent)
-- **File**: gptq.py:412
+### G-018: Token refresh silent failure
+- **Symptom**: Token refresh silently returns None when cache is cold
+- **Reproduction**: TokenStore(cache=None).refresh(user_id=42)
+- **Error**: AssertionError, no traceback (silent)
+- **File**: example.py:412
 - **Severity**: critical
 
 ## False Positives Filtered
@@ -87,7 +87,7 @@ KOREAN_REPORT = """\
 
 ### [신규] G-077: 한글 버그 제목
 - **Symptom**: 한글로 작성된 증상 설명입니다
-- **Reproduction**: AdvancedQuantizeParameters(...)
+- **Reproduction**: ExampleService(...)
 - **Error**: ValueError가 발생함
 - **File**: src/foo.py:42
 - **Severity**: 높음
@@ -100,9 +100,9 @@ def test_parses_golden_report_cleanly():
     assert status == "ok"
     assert len(findings) == 2
     titles = [f.title for f in findings]
-    assert "AWQ sym=false ValueError on llama3-8b" in titles[0]
+    assert "Login fails with empty password" in titles[0]
     assert findings[0].raw_bug_id == "G-017"
-    assert findings[0].file_path == "src/np_quantizer_v2/schema.py"
+    assert findings[0].file_path == "src/example/schema.py"
     assert findings[0].line_hint == 123
     assert findings[0].severity == QAFindingSeverity.HIGH
     assert findings[0].sources == ["alpha"]
